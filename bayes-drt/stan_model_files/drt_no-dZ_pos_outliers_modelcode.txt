@@ -1,0 +1,82 @@
+data {
+	int<lower=0> N; // number of measured frequencies
+	int<lower=0> K; // number of basis functions
+	matrix[N, K] x; // stacked A matrix ([[A'] [A'']])
+	vector[N] y; // stacked impedance vector ([Z' Z'']^T)
+	vector[N/2] freq; //measured frequencies
+	int<lower=0> N_tilde; // number of frequencies to predict
+	matrix[N_tilde,K] x_tilde; //stacked A matrix for prediction
+	vector[N_tilde/2] freq_tilde; // frequencies to predict
+	matrix[K,K] L0; // 0th order differentiation matrix
+	matrix[K,K] L1; // 1st order differentiation matrix
+	matrix[K,K] L2; // 2nd order differentiation matrix
+	real<lower=0> sigma_min; // noise level floor
+	real<lower=0> tau_alpha; // shape for inverse gamma distribution on tau
+	real<lower=0> tau_beta; // rate for inverse gamma distribution on tau
+	real<lower=0,upper=1> out_frac; // sigma_out slab mixture fraction
+	real<lower=0> ina; // shape for inverse gamma on spike of sigma_out
+	real<lower=0> inb; // rate for inverse gamma on spike of sigma_out
+	real<lower=0> outa; // shape for inverse gamma on slab of sigma_out
+	real<lower=0> outb;// rate for inverse gamma on slab of sigma_out
+}
+transformed data {
+	vector [N] hfr_vec = append_row(rep_vector(1,N/2), rep_vector(0,N/2));
+	vector [N] induc_vec = append_row(rep_vector(0,N/2), 2*pi()*freq);
+	vector [N_tilde] hfr_vec_tilde = append_row(rep_vector(1,N_tilde/2), rep_vector(0,N_tilde/2));
+	vector [N_tilde] induc_vec_tilde = append_row(rep_vector(0,N_tilde/2), 2*pi()*freq_tilde);
+}
+parameters {
+	real<lower=0> hfr_raw;
+	real<lower=0> induc;
+	vector<lower=0>[K] beta;
+	real<lower=0> sigma_res_raw;
+	real<lower=0> alpha_prop_raw;
+	real<lower=0> alpha_re_raw;
+	real<lower=0> alpha_im_raw;
+	vector<lower=0>[N] sigma_out;
+	vector<lower=0>[K] tau_raw;
+	real<lower=0> d0_strength;
+	real<lower=0> d1_strength;
+	real<lower=0> d2_strength;
+}
+transformed parameters {
+	real<lower=0> hfr = hfr_raw*100;
+	vector<lower=0>[K] LB = sqrt(d0_strength*square(L0*beta) + d1_strength*square(L1*beta) + d2_strength*square(L2*beta));
+	real<lower=0> sigma_res = sigma_res_raw*0.05;
+	real<lower=0> alpha_prop = alpha_prop_raw*0.05;
+	real<lower=0> alpha_re = alpha_re_raw*0.05;
+	real<lower=0> alpha_im = alpha_im_raw*0.05;
+	vector[N] y_hat = x*beta + hfr*hfr_vec + induc*induc_vec;
+	vector[N] y_hat_re = append_row(y_hat[1:N/2],y_hat[1:N/2]);
+	vector[N] y_hat_im = append_row(y_hat[N/2+1:N],y_hat[N/2+1:N]);
+	vector<lower=0>[N] sigma_tot = sqrt(square(sigma_min) + square(sigma_res) + square(alpha_prop*y_hat)
+									+ square(alpha_re*y_hat_re) + square(alpha_im*y_hat_im) + square(sigma_out)
+									);
+	vector<lower=0>[K] tau = tau_raw * 0.15;
+	vector[K-2] dtau;
+	for (k in 1:K-2)
+		dtau[k] = 0.5*(tau[k+1] - 0.5*(tau[k] + tau[k+2]))/tau[k+1];
+}
+model {
+	d0_strength ~ inv_gamma(5,5);
+	d1_strength ~ inv_gamma(5,5);
+	d2_strength ~ inv_gamma(5,5);
+	tau_raw ~ inv_gamma(tau_alpha,tau_beta);
+	hfr_raw ~ std_normal();
+	induc ~ std_normal();
+	LB ~ normal(0,tau);
+	dtau ~ std_normal();
+	y ~ normal(y_hat,sigma_tot);
+	sigma_res_raw ~ std_normal();
+	alpha_prop_raw ~ std_normal();
+	alpha_re_raw ~ std_normal();
+	alpha_im_raw ~ std_normal();
+	for (n in 1:N) // outlier indicator
+		target += log_sum_exp(log(1-out_frac) + inv_gamma_lpdf(sigma_out[n] | ina,inb),
+							log(out_frac) + inv_gamma_lpdf(sigma_out[n] | outa,outb)
+							);
+}
+generated quantities {
+	vector[N_tilde] y_tilde
+		= x_tilde*beta + hfr*hfr_vec_tilde + induc*induc_vec_tilde;
+}

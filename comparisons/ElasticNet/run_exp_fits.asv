@@ -1,0 +1,54 @@
+%% set
+data_path = '../../data/experimental';
+files = {'DRTtools_LIB_data.txt',...
+    'DRTtools_LIB_data_qtr.csv',...
+    'PDAC_COM3_02109_Contact10_2065C_500C.txt'};
+taus = {(1./(2*pi*logspace(4,-5,200)))',...
+    (1./(2*pi*logspace(4,-5,200)))',...
+    (1./(2*pi*logspace(7,-3,101)))'
+    };
+
+%% Load and fit impedance files
+for n = 1:length(files)
+    file = files{n};
+    tau = taus{n};
+    filepath = strcat(file.folder,'/',file.name);
+    if file=='DRTtools_LIB_data.txt'
+        data = readtable(filepath,'Delimiter','\t');
+        data.Properties.VariableNames{'Var1'} = 'Freq';
+        data.Properties.VariableNames{'Var1'} = 'Zreal';
+        data.Properties.VariableNames{'Var1'} = 'Zimag';
+    else
+        data = readtable(filepath);
+    end
+    
+    
+    
+end
+
+% basic spectra
+[A_re,A_im] = get_A(A_file,freq,tau);
+
+sim_files = 
+% remove trunc files
+sim_files = sim_files(~contains({sim_files.name},'trunc'));
+fit_files(sim_files,A_re,A_im,tau)
+
+% truncated spectrum
+[A_re,A_im] = get_A(A_file2,freq2,tau2);
+trunc_files = dir(strcat(data_path,'/simulated/Z_trunc*.csv'));
+fit_files(trunc_files,A_re,A_im,tau2)
+
+function [A_re,A_im] = get_A(A_file,f,tau)
+    if isfile(A_file)
+        A_load = load(A_file);
+        A_re = A_load.A_re;
+        A_im = A_load.A_im;
+    else
+        % if precomputed files not available, calculate matrices
+        disp('Calculating A matrices...')
+        [A_re,A_im] = cal_Basis(f,tau);
+        save(A_file,'A_re','A_im')
+        disp('Finished calculating matrices')
+    end
+end
