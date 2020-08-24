@@ -388,7 +388,8 @@ class DRT():
 			Which part of the impedance data to fit. Options: 'both', 'real', 'imag'
 		scale_A: bool, optional (default: False)
 			If True, scale the A matrices such that the modulus of each column (considering both A_re and A_im) has unit variance. Not recommended
-		scale_Z: bool, optional (default: False)
+		scale_Z: bool, optional (default: True)
+			
 		"""
 		# perform scaling and weighting and get A and B matrices
 		Z_scaled, A_re,A_im, WA_re,WA_im,WZ_re,WZ_im, B = self._prep_matrices(frequencies,Z,part,weights=None,dZ=dZ,scale_A=scale_A,scale_Z=scale_Z)
@@ -423,7 +424,7 @@ class DRT():
 			
 		model_str += '_StanModel.pkl'
 		# print(model_str)
-		model = load_pickle(os.path.join(script_dir,'models',model_str))
+		model = load_pickle(os.path.join(script_dir,'stan_model_files',model_str))
 
 		# optimize posterior
 		self._opt_result = model.optimizing(dat,iter=max_iter,seed=1234,init=init)
@@ -477,7 +478,7 @@ class DRT():
 			
 		model_str += '_StanModel.pkl'
 		# print(model_str)
-		model = load_pickle(os.path.join(script_dir,'models',model_str))
+		model = load_pickle(os.path.join(script_dir,'stan_model_files',model_str))
 			
 		
 		# sample from posterior
