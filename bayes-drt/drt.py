@@ -45,7 +45,7 @@ class DRT():
 			raise ValueError(f'Invalid hyper_penalty argument {hyper_penalty}. Options are ''integral'', ''discrete'', and ''cholesky''')
 		
 		# perform scaling and weighting and get A and B matrices
-		Z, A_re,A_im, WA_re,WA_im,WZ_re,WZ_im, B = self._prep_matrices(frequencies,Z,part,weights,dZ,scale_A,scale_Z)
+		frequencies, Z, A_re,A_im, WA_re,WA_im,WZ_re,WZ_im, B = self._prep_matrices(frequencies,Z,part,weights,dZ,scale_A,scale_Z)
 		
 		# create L or M matrix
 		if type(reg_ord)==int:
@@ -392,7 +392,7 @@ class DRT():
 			
 		"""
 		# perform scaling and weighting and get A and B matrices
-		Z_scaled, A_re,A_im, WA_re,WA_im,WZ_re,WZ_im, B = self._prep_matrices(frequencies,Z,part,weights=None,dZ=dZ,scale_A=scale_A,scale_Z=scale_Z)
+		frequencies, Z_scaled, A_re,A_im, WA_re,WA_im,WZ_re,WZ_im, B = self._prep_matrices(frequencies,Z,part,weights=None,dZ=dZ,scale_A=scale_A,scale_Z=scale_Z)
 		
 		# create L matrices
 		self.L0 = construct_L(1/(2*np.pi*self.tau),tau=self.tau,basis=self.basis,epsilon=self.epsilon,order=0)
@@ -446,7 +446,7 @@ class DRT():
 	def bayes_fit(self,frequencies,Z,part='both',scale_A=False,scale_Z=True,dZ=False,init_from_ridge=True,nonneg=False,outliers=False,sigma_min=0.002,
 			warmup=200,sample=200,chains=2):
 		# perform scaling and weighting and get A and B matrices
-		Z_scaled, A_re,A_im, WA_re,WA_im,WZ_re,WZ_im, B = self._prep_matrices(frequencies,Z,part,weights=None,dZ=dZ,scale_A=scale_A,scale_Z=scale_Z)
+		frequencies, Z_scaled, A_re,A_im, WA_re,WA_im,WZ_re,WZ_im, B = self._prep_matrices(frequencies,Z,part,weights=None,dZ=dZ,scale_A=scale_A,scale_Z=scale_Z)
 		
 		# create L matrices
 		self.L0 = construct_L(1/(2*np.pi*self.tau),tau=self.tau,basis=self.basis,epsilon=self.epsilon,order=0)
@@ -654,15 +654,18 @@ class DRT():
 	def _prep_matrices(self,frequencies,Z,part,weights,dZ,scale_A,scale_Z):
 		if len(frequencies)!=len(Z):
 			raise ValueError("Length of frequencies and Z must be equal")
+			
+		# sort frequencies descending
+		frequencies = np.sort(frequencies)[::-1]
 		
 		# check if we need to recalculate A matrices
 		freq_subset = False
-		if np.min(np.round(self.f_train,10)==np.round(frequencies,10))==False:
+		if np.min(rel_round(self.f_train,10)==rel_round(frequencies,10))==False:
 			# if frequencies have changed, must recalculate
 			self._recalc_mat = True
 			# if frequencies are a subset of f_train, we can use submatrices of the existing A matrices
 			# instead of recalculating
-			if np.min([round(f,10) in np.round(self.f_train,10) for f in frequencies])==True:
+			if np.min([rel_round(f,10) in rel_round(self.f_train,10) for f in frequencies])==True:
 				freq_subset = True
 			else:
 				self.f_train = frequencies
@@ -674,7 +677,11 @@ class DRT():
 			Z = np.array(Z)
 		
 		if self.basis_freq is None:
-			self.tau = 1/(2*np.pi*frequencies)
+			# by default, use 10 ppd for tau spacing regardless of input frequency spacing
+			tmin = np.log10(1/(2*np.pi*np.max(frequencies)))
+			tmax = np.log10(1/(2*np.pi*np.min(frequencies)))
+			num_decades = tmax - tmin
+			self.tau = np.logspace(tmin,tmax, int(10*np.ceil(num_decades) + 1))
 		else:
 			self.tau = 1/(2*np.pi*self.basis_freq)
 		
@@ -702,7 +709,7 @@ class DRT():
 			if freq_subset:
 				# frequencies is a subset of f_train - no need to recalc
 				# print('freq in f_train')
-				f_index = np.array([np.where(np.round(self.f_train,10)==round(f,10))[0][0] for f in frequencies])
+				f_index = np.array([np.where(rel_round(self.f_train,10)==rel_round(f,10))[0][0] for f in frequencies])
 				A_re = self.A_re[f_index,:].copy()
 				A_im = self.A_im[f_index,:].copy()
 				
@@ -756,7 +763,7 @@ class DRT():
 		if not dZ:
 			B = None
 		
-		return Z, A_re,A_im, WA_re,WA_im,WZ_re,WZ_im, B
+		return frequencies, Z, A_re,A_im, WA_re,WA_im,WZ_re,WZ_im, B
 			
 			
 	def _format_weights(self,frequencies,Z,weights,part):
@@ -850,12 +857,12 @@ class DRT():
 	def predict(self,frequencies,percentile=None):
 		# check if we need to recalculate A matrices
 		freq_subset = False
-		if np.min(np.round(self.f_train,10)==np.round(frequencies,10))==False:					
+		if np.min(rel_round(self.f_train,10)==rel_round(frequencies,10))==False:					
 			# if frequencies are a subset of f_train, we can use submatrices of the existing A matrices
 			# instead of calculating new A matrices
-			if np.min([round(f,10) in np.round(self.f_train,10) for f in frequencies])==True:
+			if np.min([rel_round(f,10) in rel_round(self.f_train,10) for f in frequencies])==True:
 				# print('freq in f_train')
-				f_index = np.array([np.where(np.round(self.f_train,10)==round(f,10))[0][0] for f in frequencies])
+				f_index = np.array([np.where(rel_round(self.f_train,10)==rel_round(f,10))[0][0] for f in frequencies])
 				A_re = self.A_re[f_index,:].copy()
 				A_im = self.A_im[f_index,:].copy()
 			# otherwise, we need to calculate A matrices
@@ -866,6 +873,7 @@ class DRT():
 			A_re = self.A_re
 			A_im = self.A_im
 
+		# need to fix this - should use the output from sample_result, rather than coef_percentile
 		if percentile is not None:
 			coef = self.coef_percentile(percentile)
 		else:
@@ -879,7 +887,7 @@ class DRT():
 		if percentile is not None and self.fit_type!='bayes':
 			raise ValueError('Percentile prediction is only available for bayes_fit')
 			
-		if np.min(np.round(self.f_train,10)==np.round(frequencies,10))==True:
+		if np.min(rel_round(self.f_train,10)==rel_round(frequencies,10))==True:
 			# if frequencies are training frequencies, just use sigma_tot output
 			if self.fit_type=='bayes':
 				if percentile is not None:
@@ -928,7 +936,7 @@ class DRT():
 				raise ValueError('Error scale prediction only available for bayes_fit and map_fit')
 				
 			# try:
-			sigma_min = self._sigma_min
+			sigma_min = self.sigma_min
 			# except AttributeError:
 				# # legacy - for models run before _sigma_min was set by fit methods
 				# sigma_min = 0 #***placeholder
@@ -1017,6 +1025,26 @@ class DRT():
 			self.A_im[:,1] = -2*np.pi*self.f_train
 			
 	fit_inductance = property(get_fit_inductance,set_fit_inductance)
+	
+def rel_round(x,precision):
+	"""Round to relative precision
+	
+	Parameters
+	----------
+	x : array
+		array of numbers to round
+	precision : int
+		number of digits to keep
+	"""
+	# add 1e-30 for safety in case of zeros in x
+	x_scale = np.floor(np.log10(np.array(x)+1e-30))
+	digits = (precision - x_scale).astype(int)
+	# print(digits)
+	if type(x) in (list,np.ndarray):
+		x_round = np.array([round(xi,di) for xi,di in zip(x,digits)])
+	else:
+		x_round = round(x,digits)
+	return x_round
 		
 
 def get_basis_func(basis):
@@ -1088,7 +1116,7 @@ def construct_A(frequencies,part,tau=None,basis='gaussian',fit_inductance=False,
 	if tau is None:
 		tau = 1/omega
 		tau_eq_omega = True
-	elif np.min(tau==1/omega):
+	elif np.min(rel_round(tau,10)==rel_round(1/omega,10)):
 		tau_eq_omega = True
 	else:
 		tau_eq_omega = False
