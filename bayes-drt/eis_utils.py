@@ -1268,7 +1268,7 @@ def plot_bode(df,area=None,axes=None,label='',plot_func='scatter',cols=['Zmod','
 		raise ValueError(f'Invalid plot type {plot_func}. Options are scatter, plot')
 	
 	for ax in axes:
-		ax.set_xlabel('Frequency (Hz)')
+		ax.set_xlabel('$f$ / Hz')
 		ax.set_xscale('log')
 		
 	def ax_title(col,area):
