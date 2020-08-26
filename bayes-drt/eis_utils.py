@@ -1190,7 +1190,8 @@ def plot_nyquist(df,area=None,ax=None,label='',plot_func='scatter',unit_scale='a
 		# if area given, convert to ASR
 		df['Zreal'] *= area
 		df['Zimag'] *= area
-		
+	
+	# get/set unit scale
 	unit_map = {-2:'$\mu$',-1:'m',0:'',1:'k',2:'M',3:'G'}
 	if unit_scale=='auto':
 		unit_scale = get_unit_scale(df)
@@ -1200,7 +1201,8 @@ def plot_nyquist(df,area=None,ax=None,label='',plot_func='scatter',unit_scale='a
 		Z_ord = 0
 	else:
 		Z_ord = [k for k,v in unit_map.items() if v==unit_scale][0]
-		
+	
+	# scale data	
 	df['Zreal'] /= 10**(Z_ord*3)
 	df['Zimag'] /= 10**(Z_ord*3)
 		
@@ -1226,7 +1228,7 @@ def plot_nyquist(df,area=None,ax=None,label='',plot_func='scatter',unit_scale='a
 	
 	return ax
 
-def plot_bode(df,area=None,axes=None,label='',plot_func='scatter',cols=['Zmod','Zphz'],**kw):
+def plot_bode(df,area=None,axes=None,label='',plot_func='scatter',cols=['Zmod','Zphz'],unit_scale='auto',**kw):
 	"""
 	Bode plot
 	
@@ -1236,8 +1238,10 @@ def plot_bode(df,area=None,axes=None,label='',plot_func='scatter',cols=['Zmod','
 		label: series label
 		plot_func: pyplot plotting function. Options: 'scatter', 'plot'
 		cols: which columns to plot vs. frequency. Defaults to Zmod and Zphz
+		unit_scale: impedance scale. Options are 'auto', 'mu', 'm', '', 'k', 'M'
 		kw: kwargs for plot_func
 	"""
+	df = df.copy()
 	# formatting for columns
 	col_dict = {'Zmod':{'units':'$\Omega$','label':'$Z_{\mathrm{mod}}$','scale':'log'},
 				'Zphz':{'units':'$^\circ$','label':'$Z_{\mathrm{phz}}$','scale':'linear'},
@@ -1254,6 +1258,22 @@ def plot_bode(df,area=None,axes=None,label='',plot_func='scatter',cols=['Zmod','
 	if area is not None:
 		df = df.copy()
 		df['Zmod'] *= area
+		
+	# get/set unit scale	
+	unit_map = {-2:'$\mu$',-1:'m',0:'',1:'k',2:'M',3:'G'}
+	if unit_scale=='auto':
+		unit_scale = get_unit_scale(df)
+		Z_ord = [k for k,v in unit_map.items() if v==unit_scale][0]
+	elif unit_scale is None:
+		unit_scale=''
+		Z_ord = 0
+	else:
+		Z_ord = [k for k,v in unit_map.items() if v==unit_scale][0]
+	
+	# scale data
+	df['Zreal'] /= 10**(Z_ord*3)
+	df['Zimag'] /= 10**(Z_ord*3)
+	
 	
 	if plot_func=='scatter':
 		if 's' not in kw.keys():
@@ -1274,9 +1294,11 @@ def plot_bode(df,area=None,axes=None,label='',plot_func='scatter',cols=['Zmod','
 	def ax_title(col,area):
 		cdict = col_dict.get(col,{})
 		if area is not None and cdict.get('units','')=='$\Omega$':
-			title = '{} ({}$\cdot\mathrm{{cm}}^2$)'.format(cdict.get('label',col),cdict.get('units',''))
+			title = '{} / {}{}$\cdot\mathrm{{cm}}^2$'.format(cdict.get('label',col),unit_scale,cdict.get('units',''))
+		elif cdict.get('units','')=='$\Omega$':
+			title = '{} / {}{}'.format(cdict.get('label',col),unit_scale,cdict.get('units',''))
 		else:
-			title = '{} ({})'.format(cdict.get('label',col),cdict.get('units','a.u.'))
+			title = '{} / {}'.format(cdict.get('label',col),cdict.get('units','a.u.'))
 		return title
 	
 	for col, ax in zip(cols,axes):
