@@ -25,7 +25,7 @@ class DRT():
 		self._Z_scale = 1.0
 		
 	def ridge_fit(self,frequencies,Z,part='both',hyper_lambda=True,hyper_penalty='integral',hyper_method='analytic',
-		beta=2.5,lambda_0=1,reg_ord=2,L1_penalty=0,x0=None,weights=None,xtol=1e-3,max_iter=20,scale_A=False,scale_Z=True,
+		beta=2.5,lambda_0=1e-2,reg_ord=2,L1_penalty=0,x0=None,weights=None,xtol=1e-3,max_iter=20,scale_A=False,scale_Z=True,
 		dZ=True,dZ_power=0.5,hyper_a=False,alpha_a=2,beta_a=2,hyper_b=False,sb=1,nonneg=False):
 		"""
 		weights : str or array (default: None)
@@ -374,7 +374,7 @@ class DRT():
 		self._recalc_mat = False
 		self.fit_type = 'ridge'
 		
-	def map_fit(self,frequencies,Z,part='both',scale_A=False,scale_Z=True,dZ=False,init_from_ridge=True,nonneg=False,outliers=False,sigma_min=0.002,max_iter=30000):
+	def map_fit(self,frequencies,Z,part='both',scale_A=False,scale_Z=True,dZ=False,init_from_ridge=False,nonneg=False,outliers=False,sigma_min=0.002,max_iter=30000):
 		"""
 		Obtain the maximum a posteriori estimate of the DRT (and all model parameters).
 		
@@ -403,6 +403,11 @@ class DRT():
 		if init_from_ridge:
 			init = self._get_init_from_ridge(frequencies,Z,beta=2.5,lambda_0=1e-2,nonneg=nonneg,outliers=outliers)
 			self._init_params = init()
+		elif outliers:
+			# initialize sigma_out near zero, everything else randomly
+			iv = {'sigma_out_raw':np.zeros(2*len(Z)) + 0.1}
+			def init():
+				return iv
 		else:
 			init = 'random'
 		
@@ -443,7 +448,7 @@ class DRT():
 		self.fit_type = 'map'
 		self.sigma_min = sigma_min
 		
-	def bayes_fit(self,frequencies,Z,part='both',scale_A=False,scale_Z=True,dZ=False,init_from_ridge=True,nonneg=False,outliers=False,sigma_min=0.002,
+	def bayes_fit(self,frequencies,Z,part='both',scale_A=False,scale_Z=True,dZ=False,init_from_ridge=False,nonneg=False,outliers=False,sigma_min=0.002,
 			warmup=200,sample=200,chains=2):
 		# perform scaling and weighting and get A and B matrices
 		frequencies, Z_scaled, A_re,A_im, WA_re,WA_im,WZ_re,WZ_im, B = self._prep_matrices(frequencies,Z,part,weights=None,dZ=dZ,scale_A=scale_A,scale_Z=scale_Z)
@@ -457,6 +462,11 @@ class DRT():
 		if init_from_ridge:
 			init = self._get_init_from_ridge(frequencies,Z,beta=2.5,lambda_0=1e-2,nonneg=nonneg,outliers=outliers)
 			self._init_params = init()
+		# elif outliers:
+			# # initialize sigma_out near zero, everything else randomly
+			# iv = {'sigma_out_raw':np.zeros(2*len(Z)) + 0.1}
+			# def init():
+				# return iv
 		else:
 			init = 'random'
 		
@@ -672,6 +682,7 @@ class DRT():
 		else:
 			self.f_train = frequencies
 		# print(self._recalc_mat)
+		# print(freq_subset)
 		
 		if type(Z)!=np.ndarray:
 			Z = np.array(Z)
@@ -1113,6 +1124,8 @@ def construct_A(frequencies,part,tau=None,basis='gaussian',fit_inductance=False,
 	"need to handle basis_kw"
 	
 	omega = frequencies*2*np.pi
+	
+	# check if tau is inverse of omega
 	if tau is None:
 		tau = 1/omega
 		tau_eq_omega = True
@@ -1120,13 +1133,42 @@ def construct_A(frequencies,part,tau=None,basis='gaussian',fit_inductance=False,
 		tau_eq_omega = True
 	else:
 		tau_eq_omega = False
+	
+	# check if omega is subset of inverse tau
+	# find index where first frequency matches tau
+	match = rel_round(1/omega[0],10)==rel_round(tau,10)
+	if np.sum(match)==1:
+		start_idx = np.where(match==True)[0][0]
+		# if tau vector starting at start_idx matches omega, omega is a subset of tau
+		if np.min(rel_round(tau[start_idx:start_idx + len(omega)],10)==rel_round(1/omega,10)):
+			freq_subset = True
+		else:
+			freq_subset = False
+	elif np.sum(match)==0:
+		# if no tau corresponds to first omega, omega is not a subset of tau
+		freq_subset = False
+	else:
+		# if more than one match, must be duplicates in tau
+		raise Exception('Repeated tau values')
+		
+	# determine if A is a Toeplitz matrix
+	if is_loguniform(frequencies):
+		if tau_eq_omega:
+			is_toeplitz = True
+		elif freq_subset and is_loguniform(tau):
+			is_toeplitz = True
+		else:
+			is_toeplitz = False
+	else:
+		is_toeplitz = False
+		
 	# add 2 columns for high-frequency resistance and inductance
 	A = np.zeros((len(frequencies),len(tau)+2))
 	
 	# get function to integrate
 	func = get_A_func(part,basis)
 		
-	if is_loguniform(frequencies) and tau_eq_omega:
+	if is_toeplitz: #is_loguniform(frequencies) and tau_eq_omega:
 		# only need to calculate 1st row and column
 		w_0 = omega[0]
 		t_0 = tau[0]
@@ -1169,7 +1211,7 @@ def construct_A(frequencies,part,tau=None,basis='gaussian',fit_inductance=False,
 	
 
 def construct_L(frequencies,tau=None,basis='gaussian',epsilon=1,order=1):
-	"Differentiation matrix. L@x gives derivative of DRT"
+	"Differentiation matrix. L@coef gives derivative of DRT"
 	omega = 2*np.pi*frequencies
 	if tau is None:
 		# if no time constants given, assume collocated with frequencies
