@@ -6,9 +6,8 @@
 * Hierarchical Bayesian regression using Markov Chain Monte Carlo sampling to estimate the posterior distribution (point estimate and credibility intervals)
 * Hierarchical Bayesian regression using the L-BFGS algorithm to maximize the posterior (point estimate)
 
-Tutorials, examples, and documentation will be added soon.
+Several tutorials are available in `tutorials`. Additional examples and documentation will be added soon.
 
 The methods implemented in `bayes-drt` are the subject of a manuscript submitted to *Electrochimica Acta* in Aug. 2020. All code used to generate the results in the manuscript are available here:
 * `data` contains all experimental and simulated data files.
-* `code_EchemActa` contains the code used to simulate data, estimate the DRT using `bayes-drt`, and generate figures.
-* `comparisons` contains code used to apply two DRT methods from the literature to the same dataset for comparison.
+* `code_EchemActa` contains the code used to simulate data, estimate the DRT using `bayes-drt`, apply two DRT methods from the literature to the same data for comparison, and generate figures.
