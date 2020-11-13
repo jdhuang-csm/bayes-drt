@@ -1066,6 +1066,11 @@ def get_unit_scale(df):
 	unit_scale = unit_map.get(Z_ord,'')
 	return unit_scale
 	
+def get_scale_factor(df):
+	Z_max = max(df['Zreal'].max(),df['Zimag'].abs().max())
+	Z_ord = np.floor(np.log10(Z_max)/3)
+	return 10**(3*Z_ord)
+	
 def get_common_unit_scale(df_list,aggregate='min'):
 	"""
 	Get common unit scale for multiple datasets
@@ -1170,7 +1175,7 @@ def plot_jv(df,area=None,plot_pwr=False,ax=None,pwr_kw={'ls':'--'},**plt_kw):
 			ax2.set_ylabel('Power Density (mW/cm$^2$)')
 	return ax
 	
-def plot_nyquist(df,area=None,ax=None,label='',plot_func='scatter',unit_scale='auto',label_size=10,**kw):
+def plot_nyquist(df,area=None,ax=None,label='',plot_func='scatter',unit_scale='auto',label_size=10,eq_xy=True,**kw):
 	"""
 	Nyquist plot
 	
@@ -1179,6 +1184,7 @@ def plot_nyquist(df,area=None,ax=None,label='',plot_func='scatter',unit_scale='a
 		area: cell area in cm2. If None, plot raw impedance
 		label: series label
 		plot_func: pyplot plotting function. Options: 'scatter', 'plot'
+		eq_xy: if True, ensure that scale of x and y axes is the same (i.e. xmax-xmin = ymax-ymin)
 		kw: kwargs for plot_func
 	"""
 	df = df.copy()
@@ -1225,10 +1231,52 @@ def plot_nyquist(df,area=None,ax=None,label='',plot_func='scatter',unit_scale='a
 		
 	if label!='':
 		ax.legend()
+			
+	if eq_xy:
+		# make scale of x and y axes the same
+		fig = ax.get_figure()
+		
+		# get data range
+		yrng = ax.get_ylim()[1] - ax.get_ylim()[0]
+		xrng = ax.get_xlim()[1] - ax.get_xlim()[0]
+		
+		# get axis dimensions
+		bbox = ax.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
+		width, height = bbox.width, bbox.height
+		width, height
+		
+		yscale = yrng/height
+		xscale = xrng/width
+		
+		if yscale > xscale:
+			# expand the x axis 
+			diff = (yscale - xscale)*width
+			xmin = max(0,ax.get_xlim()[0] - diff/2)
+			mindelta = ax.get_xlim()[0] - xmin
+			xmax = ax.get_xlim()[1] + diff - mindelta
+			
+			ax.set_xlim(xmin,xmax)
+		elif xscale > yscale:
+			# expand the y axis
+			diff = (xscale - yscale)*height
+			if np.min(-df['Zimag']) >= 0:
+				# if -Zimag doesn't go negative, don't go negative on y-axis
+				ymin = max(0,ax.get_ylim()[0] - diff/2)
+				mindelta = ax.get_ylim()[0] - ymin
+				ymax = ax.get_ylim()[1] + diff - mindelta
+			else:
+				negrng = abs(ax.get_ylim()[0])
+				posrng = abs(ax.get_ylim()[1])
+				negoffset = negrng*diff/(negrng + posrng)
+				posoffset = posrng*diff/(negrng + posrng)
+				ymin = ax.get_ylim()[0] - negoffset
+				ymax = ax.get_ylim()[1] + posoffset
+			
+			ax.set_ylim(ymin,ymax)
 	
 	return ax
 
-def plot_bode(df,area=None,axes=None,label='',plot_func='scatter',cols=['Zmod','Zphz'],unit_scale='auto',**kw):
+def plot_bode(df,area=None,axes=None,label='',plot_func='scatter',cols=['Zmod','Zphz'],unit_scale='auto',invert_Zimag=True,**kw):
 	"""
 	Bode plot
 	
@@ -1256,8 +1304,9 @@ def plot_bode(df,area=None,axes=None,label='',plot_func='scatter',cols=['Zmod','
 	ax1,ax2 = axes
 	
 	if area is not None:
-		df = df.copy()
-		df['Zmod'] *= area
+		for col in ['Zreal','Zimag','Zmod']:
+			if col in df.columns:
+				df[col] *= area
 		
 	# get/set unit scale	
 	unit_map = {-2:'$\mu$',-1:'m',0:'',1:'k',2:'M',3:'G'}
@@ -1271,8 +1320,12 @@ def plot_bode(df,area=None,axes=None,label='',plot_func='scatter',cols=['Zmod','
 		Z_ord = [k for k,v in unit_map.items() if v==unit_scale][0]
 	
 	# scale data
-	df['Zreal'] /= 10**(Z_ord*3)
-	df['Zimag'] /= 10**(Z_ord*3)
+	for col in ['Zreal','Zimag','Zmod']:
+		if col in df.columns:
+			df[col] /= 10**(Z_ord*3)
+	
+	if invert_Zimag:
+		df['Zimag'] *= -1
 	
 	
 	if plot_func=='scatter':
@@ -1299,11 +1352,20 @@ def plot_bode(df,area=None,axes=None,label='',plot_func='scatter',cols=['Zmod','
 			title = '{} / {}{}'.format(cdict.get('label',col),unit_scale,cdict.get('units',''))
 		else:
 			title = '{} / {}'.format(cdict.get('label',col),cdict.get('units','a.u.'))
+			
+		if col=='Zimag' and invert_Zimag:
+			title = '$-$' + title
 		return title
 	
 	for col, ax in zip(cols,axes):
 		ax.set_ylabel(ax_title(col,area))
 		ax.set_yscale(col_dict.get(col,{}).get('scale','linear'))
+		
+	for ax in axes:
+		# manually set x axis limits - sometimes matplotlib doesn't get them right
+		fmin = df['Freq'].min()
+		fmax = df['Freq'].max()
+		ax.set_xlim(fmin/5,fmax*5)
 	
 	
 	# if area is not None:
@@ -1320,11 +1382,13 @@ def plot_bode(df,area=None,axes=None,label='',plot_func='scatter',cols=['Zmod','
 	
 def plot_full_eis(df,area=None,axes=None,label='',plot_func='scatter',unit_scale='auto',bode_cols=['Zmod','Zphz'],**kw):
 	if axes is None:
-		fig = plt.figure(figsize=(8,8))
-		ax1 = plt.subplot2grid((2,2),(0,0),colspan=2)
-		ax2 = plt.subplot2grid((2,2),(1,0))
-		ax3 = plt.subplot2grid((2,2),(1,1))
-		axes = np.array([ax1,ax2,ax3])
+		# fig = plt.figure(figsize=(8,8))
+		# ax1 = plt.subplot2grid((2,2),(0,0),colspan=2)
+		# ax2 = plt.subplot2grid((2,2),(1,0))
+		# ax3 = plt.subplot2grid((2,2),(1,1))
+		# axes = np.array([ax1,ax2,ax3])
+		fig,axes = plt.subplots(1,3,figsize=(9,2.5))
+		ax1,ax2,ax3 = axes.ravel()
 	else:
 		ax1,ax2,ax3 = axes.ravel()
 		fig = axes.ravel()[0].get_figure()
@@ -1333,7 +1397,7 @@ def plot_full_eis(df,area=None,axes=None,label='',plot_func='scatter',unit_scale
 	plot_nyquist(df,area=area,label=label,ax=ax1,plot_func=plot_func,unit_scale=unit_scale,**kw)
 	
 	#Bode plots
-	plot_bode(df,area=area,label=label,axes=(ax2,ax3),plot_func=plot_func,cols=bode_cols,**kw)
+	plot_bode(df,area=area,label=label,axes=(ax2,ax3),plot_func=plot_func,cols=bode_cols,unit_scale=unit_scale,**kw)
 	
 	fig.tight_layout()
 	
@@ -1470,28 +1534,30 @@ def mark_model_peaks(params,model,area=None,plot_type='all',axes=None,label='',m
 		else:
 			axes.legend()
 	
-def plot_fit(data,params,model,w_model=None,axes=None,unit_scale='auto',area=None,bode_cols=['Zmod','Zphz'],mark_peaks=False,fit_color='k',fit_kw={},**data_kw):
+def plot_fit(data,params,model,f_model=None,axes=None,unit_scale='auto',area=None,bode_cols=['Zmod','Zphz'],mark_peaks=False,fit_color='k',fit_kw={},**data_kw):
 	w = data['Freq'].values
-	if w_model is None:
-		w_model = w
-	elif w_model is 'fill':
-		w_model = np.logspace(np.log10(np.min(w)),np.log10(np.max(w)), 100)
+	if f_model is None:
+		f_model = w
+	elif f_model is 'fill':
+		f_model = np.logspace(np.log10(np.min(w)),np.log10(np.max(w)), 100)
 	y = data.loc[:,['Zreal','Zimag']].values
 	weights = 1/(data['Zmod']).values
 	
 	if axes is None:
-		fig = plt.figure(figsize=(8,8))
-		ax1 = plt.subplot2grid((2,2),(0,0),colspan=2)
-		ax2 = plt.subplot2grid((2,2),(1,0))
-		ax3 = plt.subplot2grid((2,2),(1,1))
-		axes = np.array([ax1,ax2,ax3])
+		fig,axes = plt.subplots(1,3,figsize=(9,3))
+		ax1,ax2,ax3 = axes 
+		# fig = plt.figure(figsize=(8,8))
+		# ax1 = plt.subplot2grid((2,2),(0,0),colspan=2)
+		# ax2 = plt.subplot2grid((2,2),(1,0))
+		# ax3 = plt.subplot2grid((2,2),(1,1))
+		# axes = np.array([ax1,ax2,ax3])
 	else:
 		ax1,ax2,ax3 = axes.ravel()
 		fig = axes.ravel()[0].get_figure()
 	
-	Z_fit = model(w_model,**params)
+	Z_fit = model(f_model,**params)
 	fit_df = pd.DataFrame(np.array([Z_fit.real,Z_fit.imag]).T,columns=['Zreal','Zimag'])
-	fit_df['Freq'] = w_model
+	fit_df['Freq'] = f_model
 	fit_df['Zmod'] = (Z_fit*Z_fit.conjugate())**0.5
 	fit_df['Zphz'] = (180/np.pi)*np.arctan(Z_fit.imag/Z_fit.real)
 	
@@ -1507,8 +1573,8 @@ def plot_fit(data,params,model,w_model=None,axes=None,unit_scale='auto',area=Non
 	ax1.legend()
 	
 	#Bode plots
-	plot_bode(data,axes=(ax2,ax3),label='Measured',area=area,cols=bode_cols,**data_kw)
-	plot_bode(fit_df,axes=(ax2,ax3),label='Fit',c=fit_color,plot_func='plot',area=area,cols=bode_cols,**fit_kw)
+	plot_bode(data,axes=(ax2,ax3),label='Measured',area=area,cols=bode_cols,unit_scale=unit_scale,**data_kw)
+	plot_bode(fit_df,axes=(ax2,ax3),label='Fit',c=fit_color,plot_func='plot',area=area,cols=bode_cols,unit_scale=unit_scale,**fit_kw)
 	
 	# plot model peak frequencies
 	if mark_peaks:
@@ -1520,6 +1586,12 @@ def plot_fit(data,params,model,w_model=None,axes=None,unit_scale='auto',area=Non
 	
 	ax2.legend()
 	ax3.legend()
+	
+	for ax in [ax2,ax3]:
+		# manually set x axis limits - sometimes matplotlib doesn't get them right
+		fmin = min(data['Freq'].min(),np.min(f_model))
+		fmax = max(data['Freq'].max(),np.max(f_model))
+		ax.set_xlim(fmin/5,fmax*5)
 		
 	fig.tight_layout()
 	
@@ -1766,8 +1838,12 @@ def Z_L(w,L):
 	return w*L*1j*2*np.pi
 
 def Z_O(w,Y,B):
-	"Impedance of O diffusion element (porous bounded Warburg"
-	return (1/(Y*(1j*w)**0.5))*np.tanh(B*(1j*w)**0.5)
+	"Impedance of O diffusion element (porous bounded Warburg)"
+	return (1/(Y*(1j*w*2*np.pi)**0.5))*np.tanh(B*(1j*w*2*np.pi)**0.5)
+	
+def Z_fO(w,Y,t0,nf):
+	"Impedance of fractal O diffusion element (fractal porous bounded Warburg)"
+	return (1/(Y*(1j*t0*w*2*np.pi)**nf))*np.tanh((1j*w*t0*2*np.pi)**nf)
 	
 def Z_ger(w,Y,t0):
 	"Gerischer impedance"
@@ -2377,6 +2453,8 @@ def fit_var_RC(data,alpha,max_fun,model=Z_var_num_RC,init_params=None,max_L=1e-5
 	nonRC_param_names = inspect.getfullargspec(model)[0]
 	nonRC_param_names.remove('w')
 	
+	Zmag = data['Zmod'].max()
+	
 	if frequency_bounds is None:
 		if 'Lstray' in nonRC_param_names:
 			def objective_func(param_roots,param_names,w,y,weights,eHFR,alpha):
@@ -2385,11 +2463,11 @@ def fit_var_RC(data,alpha,max_fun,model=Z_var_num_RC,init_params=None,max_L=1e-5
 				
 				# apply a hefty penalty to prevent non-physical n values
 				n_vals = np.array([v for k,v in params.items() if (k[0]=='n' or k=='nu' or k=='beta')])
-				n_penalty = sum(n_vals[n_vals > 1])*1000
+				n_penalty = sum(n_vals[n_vals > 1])*1000*Zmag
 				
 				# apply a hefty penalty to prevent high inductance
 				if params['Lstray'] > max_L:
-					L_penalty = 1e6*(params['Lstray'] - max_L)
+					L_penalty = 1e6*(params['Lstray'] - max_L)*Zmag
 				else:
 					L_penalty = 0
 				
@@ -2401,7 +2479,7 @@ def fit_var_RC(data,alpha,max_fun,model=Z_var_num_RC,init_params=None,max_L=1e-5
 				
 				# apply a hefty penalty to prevent non-physical n values
 				n_vals = np.array([v for k,v in params.items() if (k[0]=='n' or k=='nu' or k=='beta')])
-				n_penalty = sum(n_vals[n_vals > 1])*1000
+				n_penalty = sum(n_vals[n_vals > 1])*1000*Zmag
 				
 				return err + n_penalty + alpha*(params['HFR'] - eHFR)**2
 	elif len(frequency_bounds)==2:
@@ -2412,11 +2490,11 @@ def fit_var_RC(data,alpha,max_fun,model=Z_var_num_RC,init_params=None,max_L=1e-5
 				
 				# apply a hefty penalty to prevent non-physical n values
 				n_vals = np.array([v for k,v in params.items() if (k[0]=='n' or k=='nu' or k=='beta')])
-				n_penalty = sum(n_vals[n_vals > 1])*1000
+				n_penalty = sum(n_vals[n_vals > 1])*1000*Zmag
 				
 				# apply a hefty penalty to prevent high inductance
 				if params['Lstray'] > max_L:
-					L_penalty = 1e6*(params['Lstray'] - max_L)
+					L_penalty = 1e6*(params['Lstray'] - max_L)*Zmag
 				else:
 					L_penalty = 0
 					
@@ -2424,7 +2502,7 @@ def fit_var_RC(data,alpha,max_fun,model=Z_var_num_RC,init_params=None,max_L=1e-5
 				f_peaks = var_RC_peak_frequencies(params)
 				above_freq = np.array([np.log(max(f,frequency_bounds[1])) - np.log(frequency_bounds[1]) for f in f_peaks])
 				below_freq = np.array([np.log(frequency_bounds[0]) - np.log(min(f,frequency_bounds[0])) for f in f_peaks])
-				fRQ_penalty = np.sum(above_freq*1000 + below_freq*1000)
+				fRQ_penalty = np.sum(above_freq*1000*Zmag + below_freq*1000*Zmag)
 				
 				return err + n_penalty + alpha*(params['HFR'] - eHFR)**2 + L_penalty + fRQ_penalty
 		else:
@@ -2434,13 +2512,13 @@ def fit_var_RC(data,alpha,max_fun,model=Z_var_num_RC,init_params=None,max_L=1e-5
 				
 				# apply a hefty penalty to prevent non-physical n values
 				n_vals = np.array([v for k,v in params.items() if (k[0]=='n' or k=='nu' or k=='beta')])
-				n_penalty = sum(n_vals[n_vals > 1])*1000
+				n_penalty = sum(n_vals[n_vals > 1])*1000*Zmag
 					
 				# apply a hefty penalty to keep peak frequencies inside bounds
 				f_peaks = var_RC_peak_frequencies(params)
 				above_freq = np.array([np.log(max(f,frequency_bounds[1])) - np.log(frequency_bounds[1]) for f in f_peaks])
 				below_freq = np.array([np.log(frequency_bounds[0]) - np.log(min(f,frequency_bounds[0])) for f in f_peaks])
-				fRQ_penalty = np.sum(above_freq*1000 + below_freq*1000)
+				fRQ_penalty = np.sum(above_freq*1000*Zmag + below_freq*1000*Zmag)
 				
 				return err + n_penalty + alpha*(params['HFR'] - eHFR)**2 + fRQ_penalty
 	else:
