@@ -46,7 +46,7 @@ def gp_fit(freq,Z_exp,freq_star=None,theta0=[1,5,1],max_iter=40):
 					   jac=GP_DRT.grad_NMLL_fct,  callback=print_results, options={'disp': True,'maxiter':max_iter})
 		# collect the optimized parameters
 		sigma_n, sigma_f, ell = res.x
-	except np.linalg.LinAlgError as lae:
+	except (np.linalg.LinAlgError,OverflowError) as lae:
 		print(lae)
 		best_idx = np.argmin(seq_NMLL)
 		print(f'Choosing iteration with lowest NMLL: {best_idx}')
