@@ -14,17 +14,32 @@ def load_pickle(file):
 script_dir = os.path.dirname(os.path.realpath(__file__))		
 		
 # Load and compile Stan models
-model_dict = {'drt_dZ_StanModel.pkl':'drt_dZ_modelcode.txt',
-	'drt_dZ_outliers_StanModel.pkl':'drt_dZ_outliers_modelcode.txt',
-	'drt_dZ_pos_StanModel.pkl':'drt_dZ_pos_modelcode.txt',
-	'drt_dZ_pos_outliers_StanModel.pkl':'drt_dZ_pos_outliers_modelcode.txt',
-	'drt_no-dZ_StanModel.pkl':'drt_no-dZ_modelcode.txt',
-	'drt_no-dZ_outliers_StanModel.pkl':'drt_no-dZ_outliers_modelcode.txt',
-	'drt_no-dZ_pos_StanModel.pkl':'drt_no-dZ_pos_modelcode.txt',
-	'drt_no-dZ_pos_outliers_StanModel.pkl':'drt_no-dZ_pos_outliers_modelcode.txt',
-	}
-
-
+model_dict = {
+	# Pure series models
+	# 'drt_dZ_StanModel.pkl':'drt_dZ_modelcode.txt',
+	# 'drt_dZ_outliers_StanModel.pkl':'drt_dZ_outliers_modelcode.txt',
+	# 'drt_dZ_pos_StanModel.pkl':'drt_dZ_pos_modelcode.txt',
+	# 'drt_dZ_pos_outliers_StanModel.pkl':'drt_dZ_pos_outliers_modelcode.txt',
+	'Series_StanModel.pkl':'Series_modelcode.txt',
+	'Series_outliers_StanModel.pkl':'Series_outliers_modelcode.txt',
+	'Series_pos_StanModel.pkl':'Series_pos_modelcode.txt',
+	'Series_pos_outliers_StanModel.pkl':'Series_pos_outliers_modelcode.txt',
+	# Pure parallel models
+	'Parallel_StanModel.pkl':'Parallel_modelcode.txt',
+	'Parallel_SA_StanModel.pkl':'Parallel_SA_modelcode.txt',
+	'Parallel_fitY_StanModel.pkl':'Parallel_fitY_modelcode.txt',
+	'Parallel_fitY_SA_StanModel.pkl':'Parallel_fitY_SA_modelcode.txt',
+	# Mixed series-parallel models
+	'Series-Parallel_StanModel.pkl':'Series-Parallel_modelcode.txt',
+	'Series-Parallel_pos_StanModel.pkl':'Series-Parallel_pos_modelcode.txt',
+	'Series-Parallel_pos_outliers_StanModel.pkl':'Series-Parallel_pos_outliers_modelcode.txt',
+	'Series-Parallel_outliers_StanModel.pkl':'Series-Parallel_outliers_modelcode.txt',
+	'Series-2Parallel_StanModel.pkl':'Series-2Parallel_modelcode.txt',
+	'Series-2Parallel_pos_StanModel.pkl':'Series-2Parallel_pos_modelcode.txt',
+	'MultiDist_StanModel.pkl':'MultiDist_modelcode.txt'
+	# 'Series-Parallel_pos_StanModel_qsum.pkl':'Series-Parallel_pos_modelcode_qsum.txt'
+	}   
+   
 for pkl, code_file in model_dict.items():	
 	if not os.path.exists(os.path.join(script_dir,'stan_model_files',pkl)):
 		with open(os.path.join(script_dir,'stan_model_files',code_file)) as f:
