@@ -39,7 +39,7 @@ model_dict = {
 	'MultiDist_StanModel.pkl':'MultiDist_modelcode.txt'
 	# 'Series-Parallel_pos_StanModel_qsum.pkl':'Series-Parallel_pos_modelcode_qsum.txt'
 	}   
-   
+     
 for pkl, code_file in model_dict.items():	
 	if not os.path.exists(os.path.join(script_dir,'stan_model_files',pkl)):
 		with open(os.path.join(script_dir,'stan_model_files',code_file)) as f:

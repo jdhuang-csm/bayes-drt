@@ -1223,11 +1223,11 @@ def plot_nyquist(df,area=None,ax=None,label='',plot_func='scatter',unit_scale='a
 		raise ValueError(f'Invalid plot type {plot_func}. Options are scatter, plot')
 	
 	if area is not None:
-		ax.set_xlabel(f'$Z^\prime \, / \, \mathrm{{{unit_scale}}}\Omega\cdot \mathrm{{cm}}^2$',size=label_size)
-		ax.set_ylabel(f'$-Z^{{\prime\prime}} \, / \, \mathrm{{{unit_scale}}}\Omega\cdot \mathrm{{cm}}^2$',size=label_size)
+		ax.set_xlabel(f'$Z^\prime \ / \ \mathrm{{{unit_scale}}}\Omega\cdot \mathrm{{cm}}^2$',size=label_size)
+		ax.set_ylabel(f'$-Z^{{\prime\prime}} \ / \ \mathrm{{{unit_scale}}}\Omega\cdot \mathrm{{cm}}^2$',size=label_size)
 	else:
-		ax.set_xlabel(f'$Z^\prime \, / \, \mathrm{{{unit_scale}}}\Omega$',size=label_size)
-		ax.set_ylabel(f'$-Z^{{\prime\prime}} \, / \, \mathrm{{{unit_scale}}}\Omega$',size=label_size)
+		ax.set_xlabel(f'$Z^\prime \ / \ \mathrm{{{unit_scale}}}\Omega$',size=label_size)
+		ax.set_ylabel(f'$-Z^{{\prime\prime}} \ / \ \mathrm{{{unit_scale}}}\Omega$',size=label_size)
 		
 	if label!='':
 		ax.legend()
@@ -1380,7 +1380,7 @@ def plot_bode(df,area=None,axes=None,label='',plot_func='scatter',cols=['Zmod','
 	
 	return axes
 	
-def plot_full_eis(df,area=None,axes=None,label='',plot_func='scatter',unit_scale='auto',bode_cols=['Zmod','Zphz'],**kw):
+def plot_full_eis(df,area=None,axes=None,label='',plot_func='scatter',unit_scale='auto',bode_cols=['Zmod','Zphz'],eq_xy=True,**kw):
 	if axes is None:
 		# fig = plt.figure(figsize=(8,8))
 		# ax1 = plt.subplot2grid((2,2),(0,0),colspan=2)
@@ -1394,7 +1394,7 @@ def plot_full_eis(df,area=None,axes=None,label='',plot_func='scatter',unit_scale
 		fig = axes.ravel()[0].get_figure()
 	
 	#Nyquist plot
-	plot_nyquist(df,area=area,label=label,ax=ax1,plot_func=plot_func,unit_scale=unit_scale,**kw)
+	plot_nyquist(df,area=area,label=label,ax=ax1,plot_func=plot_func,unit_scale=unit_scale,eq_xy=eq_xy,**kw)
 	
 	#Bode plots
 	plot_bode(df,area=area,label=label,axes=(ax2,ax3),plot_func=plot_func,cols=bode_cols,unit_scale=unit_scale,**kw)
