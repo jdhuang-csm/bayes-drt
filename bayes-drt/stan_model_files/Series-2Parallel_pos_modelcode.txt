@@ -11,7 +11,7 @@ data {
 	int<lower=0> N_tilde; // number of frequencies to predict
 	matrix[N_tilde,Ks] As_tilde; //stacked series A matrix for prediction
 	matrix[N_tilde,Kp1] Ap1_tilde; //stacked 1st parallel A matrix for prediction
-	matrix[N_tilde,Kp1] Ap2_tilde; //stacked 2nd parallel A matrix for prediction
+	matrix[N_tilde,Kp2] Ap2_tilde; //stacked 2nd parallel A matrix for prediction
 	vector[N_tilde/2] freq_tilde; // frequencies to predict
 	matrix[Ks,Ks] L0s; // 0th order differentiation matrix for series distribution
 	matrix[Ks,Ks] L1s; // 1st order differentiation matrix for series distribution
@@ -89,7 +89,7 @@ transformed parameters {
 									+ square(alpha_re*Z_hat_re) + square(alpha_im*Z_hat_im));
 	vector<lower=0>[Ks] ups_s = ups_s_raw * 0.15;
 	vector<lower=0>[Kp1] ups_p1 = ups_p1_raw * 0.15;
-	vector<lower=0>[Kp1] ups_p2 = ups_p2_raw * 0.15;
+	vector<lower=0>[Kp2] ups_p2 = ups_p2_raw * 0.15;
 	vector[Ks-2] dups_s;
 	vector[Kp1-2] dups_p1;
 	vector[Kp2-2] dups_p2;
