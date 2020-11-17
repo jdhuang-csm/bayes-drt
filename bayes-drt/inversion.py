@@ -10,6 +10,7 @@ import pystan as stan
 import warnings
 from stan_models import load_pickle
 import os
+from copy import deepcopy
 
 cvxopt.solvers.options['show_progress'] = False
 
@@ -18,7 +19,8 @@ script_dir = os.path.dirname(os.path.realpath(__file__))
 warnings.simplefilter('always',UserWarning)
 warnings.simplefilter('once',RuntimeWarning)
 
-class DRT():
+
+class Inverter:
 	def __init__(self,basis_freq=None,basis='gaussian',epsilon=None,fit_inductance=True,distributions={'DRT':{'kernel':'DRT'}}): #kernel='DRT',dist_type='series',symmetry='planar',bc=None,ct=False,tk=None
 		self._recalc_mat = True
 		self.distribution_matrices = {}
@@ -81,19 +83,22 @@ class DRT():
 				defaults.update(info)
 				distributions[name] = defaults	
 					
-			self.distribution_matrices[name] = {}
+			if name not in self.distribution_matrices.keys():
+				self.distribution_matrices[name] = {}
 			
 		self._distributions = distributions
 		
 		self._recalc_mat = True
+		# print('called set_distributions')
 		
 	def get_distributions(self):
+		# print('called get_distributions')
 		return self._distributions
 		
 	distributions = property(get_distributions,set_distributions)
 		
 		
-	def ridge_fit(self,frequencies,Z,part='both',penalty='integral',reg_ord=2,L1_penalty=0,
+	def ridge_fit(self,frequencies,Z,part='both',penalty='discrete',reg_ord=2,L1_penalty=0,
 		# hyper_lambda parameters
 		hyper_lambda=True,hl_solution='analytic',hl_beta=2.5,hl_fbeta=None,lambda_0=1e-2,cv_lambdas=np.logspace(-10,5,31),
 		# hyper_weights parameters
@@ -102,7 +107,7 @@ class DRT():
 		hyper_a=False,alpha_a=2,hl_beta_a=2,hyper_b=False,sb=1,
 		# other parameters
 		x0=None,weights=None,xtol=1e-3,max_iter=20,
-		scale_Z=True,nonneg=False,
+		scale_Z=True,nonneg=True,
 		dZ=True,dZ_power=0.5):
 		"""
 		weights : str or array (default: None)
@@ -640,6 +645,8 @@ class DRT():
 		# get lambda_0 that minimizes total CV error
 		totcv = recv + imcv
 		min_lam = lambdas[np.argmin(totcv)]
+		if min_lam==np.min(lambdas) or min_lam==np.max(lambdas):
+			warnings.warn('Optimal lambda_0 {} determined by Re-Im CV is at the boundary of the evaluated range. Re-run with an expanded lambda_0 range to obtain an accurate estimate of the optimal lambda_0.'.format(lambda_0))
 		
 		# store DataFrame of results
 		self.cv_result = pd.DataFrame(np.array([lambdas,recv,imcv,totcv]).T,columns=['lambda','recv','imcv','totcv'])
@@ -859,10 +866,14 @@ class DRT():
 			Array of frequencies
 		Z: array
 			Impedance data
-		beta: float
+		hl_beta: float
 			beta regularization parameter
 		lambda_0: float
 			lambda_0 regularization parameter
+		nonneg: bool
+			If True, constrain distribution to non-negative values
+		outliers: bool
+			If True, initialize sigma_out near zero
 		"""
 		# get initial parameter values from ridge fit
 		self.ridge_fit(frequencies,Z,hyper_lambda=True,penalty='integral',reg_ord=2,scale_Z=True,dZ=True,
@@ -1471,32 +1482,31 @@ class DRT():
 		# set up matrices for each distribution
 		dist_mat = {} # transient dict to hold matrices for fit, which may be scaled
 		for name, info in self.distributions.items():
+			temp_dist = deepcopy(self.distributions)
 			# set tau and epsilon
 			if info.get('basis_freq',self.basis_freq) is None:
 				# by default, use 10 ppd for tau spacing regardless of input frequency spacing
-				tmin = np.log10(1/(2*np.pi*np.max(frequencies)))
-				tmax = np.log10(1/(2*np.pi*np.min(frequencies)))
+				tmin = np.ceil(np.log10(1/(2*np.pi*np.max(frequencies))))
+				tmax = np.floor(np.log10(1/(2*np.pi*np.min(frequencies))))
 				num_decades = tmax - tmin
-				tau = np.logspace(tmin,tmax, int(10*np.ceil(num_decades) + 1))
+				tau = np.logspace(tmin,tmax, int(10*num_decades + 1))
 			else:
 				tau = 1/(2*np.pi*info.get('basis_freq',self.basis_freq))
-			self.distributions[name]['tau'] = tau
+			temp_dist[name]['tau'] = tau
 			
 			if info.get('epsilon',self.epsilon) is None:
 				# if neither dist-specific nor class-level epsilon is specified
 				dlnt = np.mean(np.diff(np.log(tau)))
-				self.distributions[name]['epsilon'] = (1/dlnt)
+				temp_dist[name]['epsilon'] = (1/dlnt)
 			elif info.get('epsilon',None) is None:
 				# if dist-specific epsilon not specified, but class-level epsilon is present
-				self.distributions[name]['epsilon'] = self.epsilon
-			epsilon = self.distributions[name].get('epsilon',self.epsilon)
+				temp_dist[name]['epsilon'] = self.epsilon
+			epsilon = temp_dist[name].get('epsilon',self.epsilon)
 			
-			# kernel: 'DRT' or 'DDT'
-			# dist_type: 'series' or 'parallel'. Required for DDT only
-			# symmetry: 'planar' or 'spherical'. Required for DDT only
-			# bc: 'transmissive' or 'blocking'. Required for DDT only
-			# basis_freq: array of frequencies to use as basis. If not specified, use self.basis_freq
-			# epsilon
+			# update distributions without overwriting self._recalc_mat
+			recalc_mat = self._recalc_mat
+			self.distributions = temp_dist
+			self._recalc_mat = recalc_mat
 			
 			# create A matrices
 			if self._recalc_mat==False:
@@ -1527,6 +1537,7 @@ class DRT():
 						self.distribution_matrices[name]['B'] = B
 				else:
 					B = None
+			
 			if self._recalc_mat or 'A_re' not in self.distribution_matrices[name].keys() or 'A_im' not in self.distribution_matrices[name].keys():
 				self.distribution_matrices[name]['A_re'] = construct_A(frequencies,'real',tau=tau,basis=self.basis,fit_inductance=self.fit_inductance,epsilon=epsilon,
 														kernel=info['kernel'],dist_type=info['dist_type'],symmetry=info.get('symmetry',''),bc=info.get('bc',''),
@@ -1553,6 +1564,8 @@ class DRT():
 					self.distribution_matrices[name]['B'] = B
 				else:
 					B = None
+
+			
 			
 			# apply weights to A
 			WA_re = W_re@A_re
@@ -1735,7 +1748,7 @@ class DRT():
 			
 		return coef
 		
-	def predict_Z(self,frequencies,distributions=None,include_offsets=True):#,percentile=None):
+	def predict_Z(self,frequencies,distributions=None,include_offsets=True,percentile=None):
 		"""percentile currently does nothing. This should be updated to use Z_hat from sample_result for bayes_fit only"""
 		
 		if distributions is not None:
@@ -1743,59 +1756,73 @@ class DRT():
 				distributions = [distributions]
 		else:
 			distributions = [k for k in self.distribution_fits.keys()]
-		
-		# get A matrices for prediction
-		pred_mat = {}
-		for name in distributions:
-			pred_mat[name] = {}
-		# check if we need to recalculate A matrices
-		freq_subset = False
-		if np.min(rel_round(self.f_train,10)==rel_round(frequencies,10))==False:					
-			# if frequencies are a subset of f_train, we can use submatrices of the existing A matrices
-			# instead of calculating new A matrices
-			if np.min([rel_round(f,10) in rel_round(self.f_train,10) for f in frequencies])==True:
-				# print('freq in f_train')
-				f_index = np.array([np.where(rel_round(self.f_train,10)==rel_round(f,10))[0][0] for f in frequencies])
+			
+		if percentile is not None:
+			if self.fit_type!='bayes':
+				raise ValueError('Percentile prediction is only available for bayes_fit results')
+			elif len(distributions)!=len(self.distributions) or include_offsets==False:
+				raise ValueError('If percentile is specified, distributions and include_offsets must be left at their default values.')
 				
+			if np.min(rel_round(self.f_train,10)==rel_round(frequencies,10))==True:
+				# If frequencies are same as f_train, use Z_hat from sample_result
+				Z_pred = np.percentile(self._sample_result['Z_hat'],percentile,axis=0)*self._Z_scale
+				Z_pred = Z_pred[:len(frequencies)] + 1j*Z_pred[len(frequencies):]
+			else:
+				# If frequencies are different from f_train, need to calculate
+				raise Exception('Percentile prediction not yet developed for frequencies different from training frequencies')
+		else:
+			# get A matrices for prediction
+			pred_mat = {}
+			for name in distributions:
+				pred_mat[name] = {}
+			# check if we need to recalculate A matrices
+			freq_subset = False
+			if np.min(rel_round(self.f_train,10)==rel_round(frequencies,10))==False:					
+				# if frequencies are a subset of f_train, we can use submatrices of the existing A matrices
+				# instead of calculating new A matrices
+				if np.min([rel_round(f,10) in rel_round(self.f_train,10) for f in frequencies])==True:
+					# print('freq in f_train')
+					f_index = np.array([np.where(rel_round(self.f_train,10)==rel_round(f,10))[0][0] for f in frequencies])
+					
+					for name in distributions:
+						mat = self.distribution_matrices[name]
+						pred_mat[name]['A_re'] = mat['A_re'][f_index,:].copy()
+						pred_mat[name]['A_im'] = mat['A_im'][f_index,:].copy()
+				# otherwise, we need to calculate A matrices
+				else:
+					for name in distributions:
+						tau = self.distributions[name]['tau']
+						epsilon = self.distributions[name]['epsilon']
+						pred_mat[name]['A_re'] = construct_A(frequencies,'real',tau=tau,basis=self.basis,fit_inductance=self.fit_inductance,epsilon=epsilon)
+						pred_mat[name]['A_im'] = construct_A(frequencies,'imag',tau=tau,basis=self.basis,fit_inductance=self.fit_inductance,epsilon=epsilon)
+			else:
+				# frequencies are same as f_train. Use existing matrices
 				for name in distributions:
 					mat = self.distribution_matrices[name]
-					pred_mat[name]['A_re'] = mat['A_re'][f_index,:].copy()
-					pred_mat[name]['A_im'] = mat['A_im'][f_index,:].copy()
-			# otherwise, we need to calculate A matrices
-			else:
-				for name in distributions:
-					tau = self.distributions[name]['tau']
-					epsilon = self.distributions[name]['epsilon']
-					pred_mat[name]['A_re'] = construct_A(frequencies,'real',tau=tau,basis=self.basis,fit_inductance=self.fit_inductance,epsilon=epsilon)
-					pred_mat[name]['A_im'] = construct_A(frequencies,'imag',tau=tau,basis=self.basis,fit_inductance=self.fit_inductance,epsilon=epsilon)
-		else:
-			# frequencies are same as f_train. Use existing matrices
-			for name in distributions:
-				mat = self.distribution_matrices[name]
-				pred_mat[name]['A_re'] = mat['A_re'].copy()
-				pred_mat[name]['A_im'] = mat['A_im'].copy()
+					pred_mat[name]['A_re'] = mat['A_re'].copy()
+					pred_mat[name]['A_im'] = mat['A_im'].copy()
+				
+			# construct Z_pred
+			Z_pred = np.zeros(len(frequencies),dtype=complex)
 			
-		# construct Z_pred
-		Z_pred = np.zeros(len(frequencies),dtype=complex)
+			# add contributions from distributions to Z_pred
+			for name, mat in pred_mat.items():
+				dist_type = self.distributions[name]['dist_type']
+				coef = self.distribution_fits[name]['coef']
+				
+				if dist_type=='series':
+					Z_re = mat['A_re']@coef
+					Z_im = mat['A_im']@coef
+					Z_pred += Z_re + 1j*Z_im
+				elif dist_type=='parallel':
+					Y_re = mat['A_re']@coef
+					Y_im = mat['A_im']@coef
+					Z_pred += 1/(Y_re + 1j*Y_im)
 		
-		# add contributions from distributions to Z_pred
-		for name, mat in pred_mat.items():
-			dist_type = self.distributions[name]['dist_type']
-			coef = self.distribution_fits[name]['coef']
-			
-			if dist_type=='series':
-				Z_re = mat['A_re']@coef
-				Z_im = mat['A_im']@coef
-				Z_pred += Z_re + 1j*Z_im
-			elif dist_type=='parallel':
-				Y_re = mat['A_re']@coef
-				Y_im = mat['A_im']@coef
-				Z_pred += 1/(Y_re + 1j*Y_im)
-	
-		# add contributions from R_inf and inductance
-		if include_offsets:
-			Z_pred += self.R_inf
-			Z_pred += 1j*2*np.pi*frequencies*self.inductance
+			# add contributions from R_inf and inductance
+			if include_offsets:
+				Z_pred += self.R_inf
+				Z_pred += 1j*2*np.pi*frequencies*self.inductance
 			
 		return Z_pred
 		
