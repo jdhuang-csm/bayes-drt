@@ -8,7 +8,7 @@ import pandas as pd
 import cvxopt
 import pystan as stan
 import warnings
-from stan_models import load_pickle
+from .stan_models import load_pickle
 import os
 from copy import deepcopy
 
