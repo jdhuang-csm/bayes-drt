@@ -1,0 +1,1 @@
+This is a static copy of the modules in bayes_drt, which represents the code used to generate the results in the Electrochimica Acta article. This is provided to ensure that the results can be reliably reproduced. However, the main bayes_drt package contains updates, fixes, and improvements to these static modules, and should be used for any new analyses.
