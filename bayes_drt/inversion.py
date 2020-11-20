@@ -22,14 +22,35 @@ warnings.simplefilter('once',RuntimeWarning)
 
 class Inverter:
 	def __init__(self,basis_freq=None,basis='gaussian',epsilon=None,fit_inductance=True,distributions={'DRT':{'kernel':'DRT'}}): #kernel='DRT',dist_type='series',symmetry='planar',bc=None,ct=False,tk=None
+		"""
+		Parameters:
+		-----------
+		basis_freq: array (default: None)
+			Frequencies to use for radial basis functions for all distributions. If None, determine from measurement frequencies.
+			If you specify a custom basis_freq, it is highly recommended that you use a spacing of 10 points per decade.
+			basis_freq arrays specified for individual distributions in the distributions argument take precedence over this array.
+		basis: str (defualt: 'gaussian')
+			Type of radial basis function to use. 'gaussian' is currently the only option.
+		epsilon: float (default: None)
+			Inverse length scale of radial basis functions. If None, determined automatically from basis_freq.
+			For best results, leave epsilon at its default value for map_fit and bayes_fit. 
+			For ridge_fit, epsilon can be tuned as desired.
+		fit_inductance: bool (default: True)
+			If True, fit inductance; if False, assume inductance is zero. Applies only to ridge_fit.
+		distributions: dict (default: {'DRT':{'kernel':'DRT'}})
+			Dictionary of distributions to fit. Each key-value pair consists of a distribution name and a nested dict of parameters.
+			See set_distributions for details.
+		"""
 		self._recalc_mat = True
 		self.distribution_matrices = {}
 		self.set_basis_freq(basis_freq)
 		self.set_basis(basis)
-		self.set_epsilon(epsilon) # inverse length scale of RBF. mu in paper
+		self.set_epsilon(epsilon) # inverse length scale of RBFs
 		self.set_fit_inductance(fit_inductance)
 		self.set_distributions(distributions)
+		self._cached_distributions = self.distributions
 		self.f_train = [0]
+		self.f_pred = None
 		self._Z_scale = 1.0
 		
 	def set_distributions(self,distributions):
@@ -38,7 +59,8 @@ class Inverter:
 		Parameters:
 		-----------
 		distributions: dict
-			Dict of dicts describing distributions to include. Top-level keys are user-supplied names for distributions. Each dict should include the following keys:
+			Dict of dicts describing distributions to include. Top-level keys are user-supplied names for distributions. 
+			Each nested dict defines a distribution and should include the following keys:
 				kernel: 'DRT' or 'DDT'
 				dist_type: 'series' or 'parallel' (default 'parallel'). Valid for DDT only
 				symmetry: 'planar' or 'spherical' (default 'planar'). Valid for DDT only
@@ -89,6 +111,7 @@ class Inverter:
 		self._distributions = distributions
 		
 		self._recalc_mat = True
+		self.f_pred = None
 		# print('called set_distributions')
 		
 	def get_distributions(self):
@@ -165,6 +188,8 @@ class Inverter:
 			
 		# perform scaling and weighting and get matrices
 		frequencies, target_scaled, WT_re,WT_im,W_re,W_im, dist_mat = self._prep_matrices(frequencies,target,part,weights,dZ,scale_Z,penalty,'ridge')
+		# refresh dist_info
+		dist_info = self.distributions[dist_name]
 		
 		if dist_info['dist_type']=='parallel' and scale_Z:
 			# redo the scaling such that Z is still the variable that gets scaled
@@ -233,8 +258,6 @@ class Inverter:
 				L0 = np.hstack((np.zeros((A_re.shape[1]-2,2)), L0))
 				L1 = np.hstack((np.zeros((A_re.shape[1]-2,2)), L1))
 				L2 = np.hstack((np.zeros((A_re.shape[1]-2,2)), L2))
-			
-		
 				
 		# convert reg_ord to list
 		if type(reg_ord)==int:
@@ -653,7 +676,8 @@ class Inverter:
 		
 		return min_lam
 		
-	def map_fit(self,frequencies,Z,part='both',scale_Z=True,init_from_ridge=False,nonneg_drt=False,outliers=False,sigma_min=0.002,max_iter=50000,random_seed=1234,fitY=False,Yscale=1,SA=False,SASY=False):
+	def map_fit(self,frequencies,Z,part='both',scale_Z=True,init_from_ridge=False,nonneg_drt=False,outliers=False,
+		sigma_min=0.002,max_iter=50000,random_seed=1234,inductance_scale=1,fitY=False,Yscale=1,SA=False,SASY=False):
 		"""
 		Obtain the maximum a posteriori estimate of the DRT (and all model parameters).
 		
@@ -676,11 +700,13 @@ class Inverter:
 			warnings.warn('For mixed series-parallel models, it is highly recommended to set nonnneg_drt=True')
 
 		# perform scaling and weighting and get A and B matrices
-		frequencies, Z_scaled, WZ_re,WZ_im,W_re,W_im, dist_mat = self._prep_matrices(frequencies,Z,part,weights=None,dZ=False,scale_Z=scale_Z,penalty='discrete',fit_type='map')
+		frequencies, Z_scaled, WZ_re,WZ_im,W_re,W_im, dist_mat = self._prep_matrices(frequencies,Z,part,weights=None,dZ=False,
+			scale_Z=scale_Z,penalty='discrete',fit_type='map')
 		
 		# prepare data for stan model
 		Z_scaled *= Yscale
-		dat = self._prep_stan_data(frequencies,Z_scaled,part,model_type,dist_mat,outliers,sigma_min,mode='optimize',fitY=fitY,SA=SA,SASY=SASY)
+		dat = self._prep_stan_data(frequencies,Z_scaled,part,model_type,dist_mat,outliers,sigma_min,mode='optimize',
+			inductance_scale=inductance_scale,fitY=fitY,SA=SA,SASY=SASY)
 		
 		# get initial fit
 		"""NEED TO UPDATE"""
@@ -743,7 +769,7 @@ class Inverter:
 		self.sigma_min = sigma_min
 		
 	def bayes_fit(self,frequencies,Z,part='both',scale_Z=True,init_from_ridge=False,nonneg_drt=False,outliers=False,sigma_min=0.002,
-			warmup=200,sample=200,chains=2,random_seed=1234,fitY=False,Yscale=1,SA=False,SASY=False):
+			warmup=200,sample=200,chains=2,random_seed=1234,inductance_scale=1,fitY=False,Yscale=1,SA=False,SASY=False):
 			
 		# load stan model
 		model,model_str = self._get_stan_model(nonneg_drt,outliers,fitY,SA)
@@ -753,11 +779,13 @@ class Inverter:
 			warnings.warn('For mixed series-parallel models, it is highly recommended to set nonnneg_drt=True')
 			
 		# perform scaling and weighting and get A and B matrices
-		frequencies, Z_scaled, WZ_re,WZ_im,W_re,W_im, dist_mat = self._prep_matrices(frequencies,Z,part,weights=None,dZ=False,scale_Z=scale_Z,penalty='discrete',fit_type='bayes')
+		frequencies, Z_scaled, WZ_re,WZ_im,W_re,W_im, dist_mat = self._prep_matrices(frequencies,Z,part,weights=None,dZ=False,
+			scale_Z=scale_Z,penalty='discrete',fit_type='bayes')
 		
 		# prepare data for stan model
 		Z_scaled *= Yscale
-		dat = self._prep_stan_data(frequencies,Z_scaled,part,model_type,dist_mat,outliers,sigma_min,mode='sample',fitY=fitY,SA=SA,SASY=SASY)
+		dat = self._prep_stan_data(frequencies,Z_scaled,part,model_type,dist_mat,outliers,sigma_min,mode='sample',
+			inductance_scale=inductance_scale,fitY=fitY,SA=SA,SASY=SASY)
 		
 		# get initial fit
 		"""NEED TO UPDATE"""
@@ -891,7 +919,7 @@ class Inverter:
 
 		return init_func
 		
-	def _prep_stan_data(self,frequencies,Z,part,model_type,dist_mat,outliers,sigma_min,mode,fitY,SA,SASY):
+	def _prep_stan_data(self,frequencies,Z,part,model_type,dist_mat,outliers,sigma_min,mode,inductance_scale,fitY,SA,SASY):
 		"""Prepare input data for Stan model. Called by map_fit and bayes_fit methods
 		
 		Parameters:
@@ -952,6 +980,7 @@ class Inverter:
 				   'sigma_min':sigma_min,
 				   'ups_alpha':ups_alpha,
 				   'ups_beta':ups_beta,
+				   'induc_scale':inductance_scale
 				  }
 				  
 			if SA:
@@ -1143,6 +1172,7 @@ class Inverter:
 				   'sigma_min':sigma_min,
 				   'ups_alpha':ups_alpha,
 				   'ups_beta':ups_beta,
+				   'induc_scale':inductance_scale,
 				   'x_sum_invscale':x_sum_invscale,
 				   'xp_scale':self.distributions[par_name].get('x_scale',1)#self._Z_scale**2,
 				  }
@@ -1230,6 +1260,7 @@ class Inverter:
 				   'sigma_min':sigma_min,
 				   'ups_alpha':ups_alpha,
 				   'ups_beta':ups_beta,
+				   'induc_scale':inductance_scale,
 				   'x_sum_invscale':x_sum_invscale,
 				   'xp1_scale':self.distributions[par1_name].get('x_scale',1),#self._Z_scale**2
 				   'xp2_scale':self.distributions[par2_name].get('x_scale',1)#self._Z_scale**2
@@ -1301,6 +1332,7 @@ class Inverter:
 				   'sigma_min':sigma_min,
 				   'ups_alpha':ups_alpha,
 				   'ups_beta':ups_beta,
+				   'induc_scale':inductance_scale,
 				   'x_sum_invscale':x_sum_invscale
 				  }
 				
@@ -1448,7 +1480,16 @@ class Inverter:
 		frequencies = frequencies[sort_idx]
 		Z = Z[sort_idx]
 		
-		# check if we need to recalculate A matrices
+		# check if we need to recalculate matrices due to change in self.distributions
+		# A change in self.distributions may not be caught by set_distributions because 
+		# set_distributions is only called if we do self.distributions = new_distributions.
+		# If we simply update one parameter for a distribution (e.g. self.distributions['DRT']['epsilon'] = 5),
+		# set_distributions never gets called, and thus _recalc_mat does not get reset to False.
+		if self.distributions!=self._cached_distributions:
+			self._recalc_mat = True
+			self.f_pred = None
+		
+		# check if we need to recalculate matrices due to change in measurement frequencies
 		freq_subset = False
 		if np.min(rel_round(self.f_train,10)==rel_round(frequencies,10))==False:
 			# if frequencies are a subset of f_train, we can use submatrices of the existing A matrices
@@ -1608,6 +1649,7 @@ class Inverter:
 		WZ_im = W_im@Z.imag
 		
 		self._recalc_mat = False
+		self._cached_distributions = self.distributions.copy()
 		
 		return frequencies, Z, WZ_re,WZ_im,W_re,W_im, dist_mat
 			
@@ -1724,23 +1766,46 @@ class Inverter:
 			rs_coef = coef/self._Z_scale
 		return rs_coef
 		
+	def _get_stan_coef_name(self,distribution_name):
+		"""Get stan model coefficient name for distribution
+		
+		Parameters:
+		-----------
+		distribution_name: str
+			Name of distribution
+		"""
+		dist_type = self.distributions[distribution_name]['dist_type']
+		model_type = self.stan_model_name.split('_')[0]
+		if model_type in ['Series','Parallel']:
+			coef_name = 'x'
+		elif model_type=='Series-Parallel':
+			if self.distributions[distribution_name]['dist_type']=='series':
+				coef_name = 'xs'
+			elif self.distributions[distribution_name]['dist_type']=='parallel':
+				coef_name = 'xp'
+		elif model_type=='Series-2Parallel':
+			if self.distributions[distribution_name]['dist_type']=='series':
+				coef_name = 'xs'
+			elif self.distributions[distribution_name]['dist_type']=='parallel':
+				order = self.distributions[distribution_name]['order']
+				coef_name = f'xp{order}'
+		
+		return coef_name
+		
 	def coef_percentile(self,distribution_name,percentile):
+		"""Get percentile for distribution coefficients
+		
+		Parameters:
+		-----------
+		distribution_name: str
+			Name of distribution
+		percentile: float
+			Percentile (0-100) to calculate
+		"""
 		if self.fit_type=='bayes':
 			dist_type = self.distributions[distribution_name]['dist_type']
-			model_type = self.stan_model_name.split('_')[0]
-			if model_type in ['Series','Parallel']:
-				coef = np.percentile(self._sample_result['x'],percentile,axis=0)
-			elif model_type=='Series-Parallel':
-				if self.distributions[distribution_name]['dist_type']=='series':
-					coef = np.percentile(self._sample_result['xs'],percentile,axis=0)
-				elif self.distributions[distribution_name]['dist_type']=='parallel':
-					coef = np.percentile(self._sample_result['xp'],percentile,axis=0)
-			elif model_type=='Series-2Parallel':
-				if self.distributions[distribution_name]['dist_type']=='series':
-					coef = np.percentile(self._sample_result['xs'],percentile,axis=0)
-				elif self.distributions[distribution_name]['dist_type']=='parallel':
-					order = self.distributions[distribution_name]['order']
-					coef = np.percentile(self._sample_result[f'xp{order}'],percentile,axis=0)
+			coef_name = self._get_stan_coef_name(distribution_name)
+			coef = np.percentile(self._sample_result[coef_name],percentile,axis=0)
 			# rescale coef
 			coef = self._rescale_coef(coef,dist_type)
 		else:
@@ -1748,9 +1813,106 @@ class Inverter:
 			
 		return coef
 		
-	def predict_Z(self,frequencies,distributions=None,include_offsets=True,percentile=None):
-		"""percentile currently does nothing. This should be updated to use Z_hat from sample_result for bayes_fit only"""
+	def _get_prediction_matrices(self,frequencies,distributions):
+	
+		if self.f_pred is not None:
+			pred_mat = {}
+			for name in distributions:
+				pred_mat[name] = {}
+			# check if we need to recalculate A matrices
+			freq_subset = False
+			if np.min(rel_round(self.f_pred,10)==rel_round(frequencies,10))==False:					
+				# frequencies differ from f_pred
+				if np.min([rel_round(f,10) in rel_round(self.f_pred,10) for f in frequencies])==True:
+					# if frequencies are a subset of f_pred, we can use submatrices of the existing A matrices
+					# instead of calculating new A matrices
+					f_index = np.array([np.where(rel_round(self.f_pred,10)==rel_round(f,10))[0][0] for f in frequencies])
+					
+					for name in distributions:
+						mat = self.prediction_matrices[name]
+						pred_mat[name]['A_re'] = mat['A_re'][f_index,:].copy()
+						pred_mat[name]['A_im'] = mat['A_im'][f_index,:].copy()
+				else:
+					# otherwise, we need to calculate A matrices
+					for name in distributions:
+						info = self.distributions[name]
+						tau = self.distributions[name]['tau']
+						epsilon = self.distributions[name]['epsilon']
+						pred_mat[name]['A_re'] = construct_A(frequencies,'real',tau=tau,basis=self.basis,fit_inductance=self.fit_inductance,epsilon=epsilon,
+														kernel=info['kernel'],dist_type=info['dist_type'],symmetry=info.get('symmetry',''),bc=info.get('bc',''),
+														ct=info.get('ct',False),k_ct=info.get('k_ct',None)
+													)
+						pred_mat[name]['A_im'] = construct_A(frequencies,'imag',tau=tau,basis=self.basis,fit_inductance=self.fit_inductance,epsilon=epsilon,
+														kernel=info['kernel'],dist_type=info['dist_type'],symmetry=info.get('symmetry',''),bc=info.get('bc',''),
+														ct=info.get('ct',False),k_ct=info.get('k_ct',None)
+													)
+					self.prediction_matrices = pred_mat
+					self.f_pred = frequencies
+			else:
+				# frequencies are same as f_pred. Use existing matrices
+				for name in distributions:
+					mat = self.prediction_matrices[name]
+					pred_mat[name]['A_re'] = mat['A_re'].copy()
+					pred_mat[name]['A_im'] = mat['A_im'].copy()
 		
+		elif self.f_pred is None:
+			pred_mat = {}
+			for name in distributions:
+				pred_mat[name] = {}
+			# check if we need to recalculate A matrices
+			freq_subset = False
+			if np.min(rel_round(self.f_train,10)==rel_round(frequencies,10))==False:					
+				# frequencies differ from f_train
+				if np.min([rel_round(f,10) in rel_round(self.f_train,10) for f in frequencies])==True:
+					# if frequencies are a subset of f_train, we can use submatrices of the existing A matrices
+					# instead of calculating new A matrices
+					f_index = np.array([np.where(rel_round(self.f_train,10)==rel_round(f,10))[0][0] for f in frequencies])
+					
+					for name in distributions:
+						mat = self.distribution_matrices[name]
+						pred_mat[name]['A_re'] = mat['A_re'][f_index,:].copy()
+						pred_mat[name]['A_im'] = mat['A_im'][f_index,:].copy()
+				else:
+					# otherwise, we need to calculate A matrices
+					for name in distributions:
+						info = self.distributions[name]
+						tau = self.distributions[name]['tau']
+						epsilon = self.distributions[name]['epsilon']
+						pred_mat[name]['A_re'] = construct_A(frequencies,'real',tau=tau,basis=self.basis,fit_inductance=self.fit_inductance,epsilon=epsilon,
+														kernel=info['kernel'],dist_type=info['dist_type'],symmetry=info.get('symmetry',''),bc=info.get('bc',''),
+														ct=info.get('ct',False),k_ct=info.get('k_ct',None)
+													)
+						pred_mat[name]['A_im'] = construct_A(frequencies,'imag',tau=tau,basis=self.basis,fit_inductance=self.fit_inductance,epsilon=epsilon,
+														kernel=info['kernel'],dist_type=info['dist_type'],symmetry=info.get('symmetry',''),bc=info.get('bc',''),
+														ct=info.get('ct',False),k_ct=info.get('k_ct',None)
+													)
+			else:
+				# frequencies are same as f_train. Use existing matrices
+				for name in distributions:
+					mat = self.distribution_matrices[name]
+					pred_mat[name]['A_re'] = mat['A_re'].copy()
+					pred_mat[name]['A_im'] = mat['A_im'].copy()
+			self.f_pred = frequencies
+			self.prediction_matrices = pred_mat
+		
+		return pred_mat
+		
+		
+	def predict_Z(self,frequencies,distributions=None,include_offsets=True,percentile=None):
+		"""Predict impedance from recovered distributions
+		
+		Parameters:
+		-----------
+		frequencies: array
+			Frequencies at which to predict impedance
+		distributions: str or list (default: None)
+			Distribution name or list of distribution names for which to sum Rp contributions. 
+			If None, include all distributions
+		include_offsets: bool (default: True)
+			If True, include contributions of R_inf and inductance. If False, include only contributions from distributions.
+		percentile: float (default: None)
+			If specified, predict a percentile (0-100) of the posterior distribution. Only applicable for bayes_fit results.
+		"""
 		if distributions is not None:
 			if type(distributions)==str:
 				distributions = [distributions]
@@ -1760,48 +1922,51 @@ class Inverter:
 		if percentile is not None:
 			if self.fit_type!='bayes':
 				raise ValueError('Percentile prediction is only available for bayes_fit results')
-			elif len(distributions)!=len(self.distributions) or include_offsets==False:
-				raise ValueError('If percentile is specified, distributions and include_offsets must be left at their default values.')
 				
-			if np.min(rel_round(self.f_train,10)==rel_round(frequencies,10))==True:
-				# If frequencies are same as f_train, use Z_hat from sample_result
+			if len(distributions)!=len(self.distributions) or include_offsets==False:
+				warnings.warn('If percentile is specified, all distributions and offsets should be included for meaningful results')
+				# If distributions or offsets are excluded, the CI will be falsely wide due to correlations between different distributions and offsets
+				
+			if np.min(rel_round(self.f_train,10)==rel_round(frequencies,10))==True and len(distributions)==len(self.distributions) and include_offsets==True:
+				# If frequencies are same as f_train AND all distributions and offsets included, can use Z_hat from sample_result
 				Z_pred = np.percentile(self._sample_result['Z_hat'],percentile,axis=0)*self._Z_scale
 				Z_pred = Z_pred[:len(frequencies)] + 1j*Z_pred[len(frequencies):]
 			else:
-				# If frequencies are different from f_train, need to calculate
-				raise Exception('Percentile prediction not yet developed for frequencies different from training frequencies')
+				# If frequencies are different from f_train OR not all distributions/offsets included, need to calculate
+				# get A matrices for prediction
+				pred_mat = self._get_prediction_matrices(frequencies,distributions)
+				
+				# calculate Zhat for each HMC sample, then get percentile
+				num_samples = len(self._sample_result['Rinf'])				
+				Z_pred_matrix = np.zeros((num_samples,len(frequencies)),dtype=complex)
+				
+				for name, mat in pred_mat.items():
+					dist_type = self.distributions[name]['dist_type']
+					coef_name = self._get_stan_coef_name(name)
+					coef_matrix = self._sample_result[coef_name]
+					coef_matrix = self._rescale_coef(coef_matrix,dist_type)
+					
+					if dist_type=='series':
+						Z_re = coef_matrix@mat['A_re'].T
+						Z_im = coef_matrix@mat['A_im'].T
+						Z_pred_matrix += Z_re + 1j*Z_im
+					elif dist_type=='parallel':
+						Y_re = coef_matrix@mat['A_re'].T
+						Y_im = coef_matrix@mat['A_im'].T
+						Z_pred_matrix += 1/(Y_re + 1j*Y_im) 
+				if include_offsets:
+					# add contributions from R_inf and inductance
+					Z_pred_matrix += np.ones((num_samples,len(frequencies)))*self._rescale_coef(self._sample_result['Rinf'],'series')[:,None] 
+					Z_pred_matrix += 1j*2*np.pi*frequencies*self._rescale_coef(self._sample_result['induc'],'series')[:,None]
+				
+				Z_pred_re = np.percentile(np.real(Z_pred_matrix),percentile,axis=0)
+				Z_pred_im = np.percentile(np.imag(Z_pred_matrix),percentile,axis=0)
+				Z_pred = Z_pred_re + 1j*Z_pred_im
+
 		else:
 			# get A matrices for prediction
-			pred_mat = {}
-			for name in distributions:
-				pred_mat[name] = {}
-			# check if we need to recalculate A matrices
-			freq_subset = False
-			if np.min(rel_round(self.f_train,10)==rel_round(frequencies,10))==False:					
-				# if frequencies are a subset of f_train, we can use submatrices of the existing A matrices
-				# instead of calculating new A matrices
-				if np.min([rel_round(f,10) in rel_round(self.f_train,10) for f in frequencies])==True:
-					# print('freq in f_train')
-					f_index = np.array([np.where(rel_round(self.f_train,10)==rel_round(f,10))[0][0] for f in frequencies])
-					
-					for name in distributions:
-						mat = self.distribution_matrices[name]
-						pred_mat[name]['A_re'] = mat['A_re'][f_index,:].copy()
-						pred_mat[name]['A_im'] = mat['A_im'][f_index,:].copy()
-				# otherwise, we need to calculate A matrices
-				else:
-					for name in distributions:
-						tau = self.distributions[name]['tau']
-						epsilon = self.distributions[name]['epsilon']
-						pred_mat[name]['A_re'] = construct_A(frequencies,'real',tau=tau,basis=self.basis,fit_inductance=self.fit_inductance,epsilon=epsilon)
-						pred_mat[name]['A_im'] = construct_A(frequencies,'imag',tau=tau,basis=self.basis,fit_inductance=self.fit_inductance,epsilon=epsilon)
-			else:
-				# frequencies are same as f_train. Use existing matrices
-				for name in distributions:
-					mat = self.distribution_matrices[name]
-					pred_mat[name]['A_re'] = mat['A_re'].copy()
-					pred_mat[name]['A_im'] = mat['A_im'].copy()
-				
+			pred_mat = self._get_prediction_matrices(frequencies,distributions)
+			
 			# construct Z_pred
 			Z_pred = np.zeros(len(frequencies),dtype=complex)
 			
@@ -1826,7 +1991,73 @@ class Inverter:
 			
 		return Z_pred
 		
-	def predict_Rp(self,distributions=None):
+	def predict_Z_distribution(self,frequencies,distributions=None,include_offsets=True):
+		"""Predict posterior distribution of impedance. Only applicable for fits obtained with bayes_fit
+		
+		Parameters:
+		-----------
+		frequencies: array
+			Frequencies at which to predict impedance
+		distributions: str or list (default: None)
+			Distribution name or list of distribution names for which to sum Rp contributions. 
+			If None, include all distributions
+		include_offsets: bool (default: True)
+			If True, include contributions of R_inf and inductance. If False, include only contributions from distributions.
+		percentile: float (default: None)
+			If specified, predict a percentile (0-100) of the posterior distribution. Only applicable for bayes_fit results.
+			
+		Returns:
+		Z_pred_matrix: array
+			Array of sampled impedance vectors. Each row is a sample
+		"""
+		if self.fit_type!='bayes':
+			raise ValueError('predict_Z_distribution is only available for bayes_fit results')
+				
+		if distributions is not None:
+			if type(distributions)==str:
+				distributions = [distributions]
+		else:
+			distributions = [k for k in self.distribution_fits.keys()]
+			
+		if len(distributions)!=len(self.distributions) or include_offsets==False:
+			warnings.warn('All distributions and offsets should be included for meaningful results from predict_Z_distribution')
+			# If distributions or offsets are excluded, the CI will be falsely wide due to correlations between different distributions and offsets
+			
+		if np.min(rel_round(self.f_train,10)==rel_round(frequencies,10))==True and len(distributions)==len(self.distributions) and include_offsets==True:
+			# If frequencies are same as f_train AND all distributions and offsets included, can use Z_hat from sample_result
+			Z_pred_split = self._sample_result['Z_hat']*self._Z_scale
+			Z_pred_matrix = Z_pred_split[:,:len(frequencies)] + 1j*Z_pred_split[:,len(frequencies):]
+		else:
+			# If frequencies are different from f_train OR not all distributions/offsets included, need to calculate
+			# get A matrices for prediction
+			pred_mat = self._get_prediction_matrices(frequencies,distributions)
+			
+			# calculate Zhat for each HMC sample, then get percentile
+			num_samples = len(self._sample_result['Rinf'])				
+			Z_pred_matrix = np.zeros((num_samples,len(frequencies)),dtype=complex)
+			
+			for name, mat in pred_mat.items():
+				dist_type = self.distributions[name]['dist_type']
+				coef_name = self._get_stan_coef_name(name)
+				coef_matrix = self._sample_result[coef_name]
+				coef_matrix = self._rescale_coef(coef_matrix,dist_type)
+				
+				if dist_type=='series':
+					Z_re = coef_matrix@mat['A_re'].T
+					Z_im = coef_matrix@mat['A_im'].T
+					Z_pred_matrix += Z_re + 1j*Z_im
+				elif dist_type=='parallel':
+					Y_re = coef_matrix@mat['A_re'].T
+					Y_im = coef_matrix@mat['A_im'].T
+					Z_pred_matrix += 1/(Y_re + 1j*Y_im) 
+			if include_offsets:
+				# add contributions from R_inf and inductance
+				Z_pred_matrix += np.ones((num_samples,len(frequencies)))*self._rescale_coef(self._sample_result['Rinf'],'series')[:,None] 
+				Z_pred_matrix += 1j*2*np.pi*frequencies*self._rescale_coef(self._sample_result['induc'],'series')[:,None]
+			
+			return Z_pred_matrix
+		
+	def predict_Rp(self,distributions=None,percentile=None):
 		"""Predict polarization resistance
 		
 		Parameters:
@@ -1834,6 +2065,8 @@ class Inverter:
 		distributions: str or list (default: None)
 			Distribution name or list of distribution names for which to sum Rp contributions. 
 			If None, include all distributions
+		percentile: float (default: None)
+			If specified, predict a percentile (0-100) of the polarization resistance. Only applicable for bayes_fit results.
 		"""
 		if distributions is not None:
 			if type(distributions)==str:
@@ -1842,20 +2075,28 @@ class Inverter:
 			distributions = [k for k in self.distribution_fits.keys()]
 			
 		if len(distributions) > 1:
-			Z_range = self.predict_Z(np.array([1e20,1e-20]),distributions=distributions)
+			Z_range = self.predict_Z(np.array([1e20,1e-20]),distributions=distributions,percentile=percentile)
 			Rp = np.real(Z_range[1] - Z_range[0])
 		else:
 			info = self.distributions[distributions[0]]
 			if info['kernel']=='DRT':
 				# Rp due to DRT is area under DRT
-				Rp = np.sum(self.distribution_fits[distributions[0]]['coef'])*np.pi**0.5/info['epsilon']
+				if percentile is None:
+					Rp = np.sum(self.distribution_fits[distributions[0]]['coef'])*np.pi**0.5/info['epsilon']
+				else:
+					if self.fit_type!='bayes':
+						raise ValueError('Percentile prediction is only available for bayes_fit results')
+					else:
+						coef_name = self._get_stan_coef_name(distributions[0])
+						coef_matrix = self._sample_result[coef_name]
+						coef_matrix = self._rescale_coef(coef_matrix,'series')
+						Rp_array= np.sum(coef_matrix,axis=1)*np.pi**0.5/info['epsilon']
+						Rp = np.percentile(Rp_array,percentile)
 			else:
 				# just calculate Z at very high and very low frequencies and take the difference in Z'
-				# could do calcs using coefficients, but this is fast and accurate enough for now (and should work for any arbitray distribution)
-				Z_range = self.predict_Z(np.array([1e20,1e-20]),distributions=distributions)
+				# could do calcs using coefficients, but this is fast and accurate enough for now (and should work for any arbitrary distribution)
+				Z_range = self.predict_Z(np.array([1e20,1e-20]),distributions=distributions,percentile=percentile)
 				Rp = np.real(Z_range[1] - Z_range[0])
-				# raise Exception("Haven't implemented Rp calc for non-DRT distributions yet")
-					
 				
 		return Rp
 		
@@ -2000,6 +2241,7 @@ class Inverter:
 	def set_basis_freq(self,basis_freq):
 		self._basis_freq = basis_freq
 		self._recalc_mat = True
+		self.f_pred = None
 		
 	basis_freq = property(get_basis_freq,set_basis_freq)
 		
@@ -2009,6 +2251,7 @@ class Inverter:
 	def set_basis(self,basis):
 		self._basis = basis
 		self._recalc_mat = True
+		self.f_pred = None
 		
 	basis = property(get_basis,set_basis)
 	
@@ -2018,6 +2261,7 @@ class Inverter:
 	def set_epsilon(self,epsilon):
 		self._epsilon = epsilon
 		self._recalc_mat = True
+		self.f_pred = None
 	
 	epsilon = property(get_epsilon,set_epsilon)
 	
