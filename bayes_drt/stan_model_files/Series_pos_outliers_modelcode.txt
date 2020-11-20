@@ -13,6 +13,7 @@ data {
 	real<lower=0> sigma_min; // noise level floor
 	real<lower=0> ups_alpha; // shape for inverse gamma distribution on ups
 	real<lower=0> ups_beta; // rate for inverse gamma distribution on ups
+	real<lower=0> induc_scale;
 	real<lower=0> so_invscale;
 }
 transformed data {
@@ -23,7 +24,7 @@ transformed data {
 }
 parameters {
 	real<lower=0> Rinf_raw;
-	real<lower=0> induc;
+	real<lower=0> induc_raw;
 	vector<lower=0>[K] x;
 	real<lower=0> sigma_res_raw;
 	real<lower=0> alpha_prop_raw;
@@ -37,6 +38,7 @@ parameters {
 }
 transformed parameters {
 	real<lower=0> Rinf = Rinf_raw*100;
+	real<lower=0> induc = induc_raw*induc_scale;
 	vector<lower=0>[K] q = sqrt(d0_strength*square(L0*x) + d1_strength*square(L1*x) + d2_strength*square(L2*x));
 	real<lower=0> sigma_res = sigma_res_raw*0.05;
 	real<lower=0> alpha_prop = alpha_prop_raw*0.05;
@@ -60,7 +62,7 @@ model {
 	d2_strength ~ inv_gamma(5,5);
 	ups_raw ~ inv_gamma(ups_alpha,ups_beta);
 	Rinf_raw ~ std_normal();
-	induc ~ std_normal();
+	induc_raw ~ std_normal();
 	q ~ normal(0,ups);
 	dups ~ std_normal();
 	Z ~ normal(Z_hat,sigma_tot);

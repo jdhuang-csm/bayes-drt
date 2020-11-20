@@ -11,7 +11,7 @@ data {
 	int<lower=0> N_tilde; // number of frequencies to predict
 	matrix[N_tilde,Ks] As_tilde; //stacked series A matrix for prediction
 	matrix[N_tilde,Kp1] Ap1_tilde; //stacked 1st parallel A matrix for prediction
-	matrix[N_tilde,Kp1] Ap2_tilde; //stacked 2nd parallel A matrix for prediction
+	matrix[N_tilde,Kp2] Ap2_tilde; //stacked 2nd parallel A matrix for prediction
 	vector[N_tilde/2] freq_tilde; // frequencies to predict
 	matrix[Ks,Ks] L0s; // 0th order differentiation matrix for series distribution
 	matrix[Ks,Ks] L1s; // 1st order differentiation matrix for series distribution
@@ -25,7 +25,10 @@ data {
 	real<lower=0> sigma_min; // noise level floor
 	real<lower=0> ups_alpha; // shape for inverse gamma distribution on ups
 	real<lower=0> ups_beta; // rate for inverse gamma distribution on ups
+	real<lower=0> induc_scale;
 	real<lower=0> x_sum_invscale;
+	real<lower=0> xp1_scale;
+	real<lower=0> xp2_scale;
 }
 transformed data {
 	vector [N] Rinf_vec = append_row(rep_vector(1,N/2), rep_vector(0,N/2));
@@ -35,10 +38,10 @@ transformed data {
 }
 parameters {
 	real<lower=0> Rinf_raw;
-	real<lower=0> induc;
+	real<lower=0> induc_raw;
 	vector [Ks] xs; // series distribution coefficients
-	vector<lower=0>[Kp1] xp1; // 1st parallel distribution coefficients
-	vector<lower=0>[Kp2] xp2; // 2nd parallel distribution coefficients
+	vector<lower=0>[Kp1] xp1_raw; // 1st parallel distribution coefficients
+	vector<lower=0>[Kp2] xp2_raw; // 2nd parallel distribution coefficients
 	real<lower=0> sigma_res_raw;
 	real<lower=0> alpha_prop_raw;
 	real<lower=0> alpha_re_raw;
@@ -58,10 +61,13 @@ parameters {
 }
 transformed parameters {
 	real<lower=0> Rinf = Rinf_raw*100;
+	real<lower=0> induc = induc_raw*induc_scale;
+	vector<lower=0>[Kp1] xp1 = xp1_raw*xp1_scale;
+	vector<lower=0>[Kp2] xp2 = xp2_raw*xp2_scale;
 	vector<lower=0>[Ks] qs = sqrt(d0s_strength*square(L0s*xs) + d1s_strength*square(L1s*xs) + d2s_strength*square(L2s*xs));
-	vector<lower=0>[Kp1] qp1 = sqrt(d0p1_strength*square(L0p1*xp1) + d1p1_strength*square(L1p1*xp1) + d2p1_strength*square(L2p1*xp1));
-	vector<lower=0>[Kp2] qp2 = sqrt(d0p2_strength*square(L0p2*xp2) + d1p2_strength*square(L1p2*xp2) + d2p2_strength*square(L2p2*xp2));
-	real<lower=0> x_sum_raw = sum(fabs(xs)) + sum(xp1) + sum(xp2);
+	vector<lower=0>[Kp1] qp1 = sqrt(d0p1_strength*square(L0p1*xp1_raw) + d1p1_strength*square(L1p1*xp1_raw) + d2p1_strength*square(L2p1*xp1_raw));
+	vector<lower=0>[Kp2] qp2 = sqrt(d0p2_strength*square(L0p2*xp2_raw) + d1p2_strength*square(L1p2*xp2_raw) + d2p2_strength*square(L2p2*xp2_raw));
+	real<lower=0> x_sum_raw = sum(xs) + sum(xp1_raw) + sum(xp2_raw);
 	real<lower=0> x_sum = x_sum_raw*x_sum_invscale;
 	real<lower=0> sigma_res = sigma_res_raw*0.05;
 	real<lower=0> alpha_prop = alpha_prop_raw*0.05;
@@ -85,7 +91,7 @@ transformed parameters {
 									+ square(alpha_re*Z_hat_re) + square(alpha_im*Z_hat_im));
 	vector<lower=0>[Ks] ups_s = ups_s_raw * 0.15;
 	vector<lower=0>[Kp1] ups_p1 = ups_p1_raw * 0.15;
-	vector<lower=0>[Kp1] ups_p2 = ups_p2_raw * 0.15;
+	vector<lower=0>[Kp2] ups_p2 = ups_p2_raw * 0.15;
 	vector[Ks-2] dups_s;
 	vector[Kp1-2] dups_p1;
 	vector[Kp2-2] dups_p2;
@@ -111,7 +117,7 @@ model {
 	ups_p1_raw ~ inv_gamma(ups_alpha,ups_beta);
 	ups_p2_raw ~ inv_gamma(ups_alpha,ups_beta);
 	Rinf_raw ~ std_normal();
-	induc ~ std_normal();
+	induc_raw ~ std_normal();
 	qs ~ normal(0,ups_s);
 	qp1 ~ normal(0,ups_p1);
 	qp2 ~ normal(0,ups_p2);

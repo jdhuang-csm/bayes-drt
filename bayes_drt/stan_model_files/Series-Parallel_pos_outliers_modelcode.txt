@@ -19,6 +19,7 @@ data {
 	real<lower=0> sigma_min; // noise level floor
 	real<lower=0> ups_alpha; // shape for inverse gamma distribution on ups
 	real<lower=0> ups_beta; // rate for inverse gamma distribution on ups
+	real<lower=0> induc_scale;
 	real<lower=0> x_sum_invscale;
 	real<lower=0> xp_scale;
 	real<lower=0> so_invscale;
@@ -31,8 +32,8 @@ transformed data {
 }
 parameters {
 	real<lower=0> Rinf_raw;
-	real<lower=0> induc;
-	vector<lower=0> [Ks] xs; // series distribution coefficients
+	real<lower=0> induc_raw;
+	vector<lower=0>[Ks] xs; // series distribution coefficients
 	vector<lower=0>[Kp] xp_raw; // raw parallel distribution coefficients
 	real<lower=0> sigma_res_raw;
 	real<lower=0> alpha_prop_raw;
@@ -50,6 +51,7 @@ parameters {
 }
 transformed parameters {
 	real<lower=0> Rinf = Rinf_raw*100;
+	real<lower=0> induc = induc_raw*induc_scale;
 	vector<lower=0>[Kp] xp = xp_raw*xp_scale; // scaled parallel distribution coefficients
 	vector<lower=0>[Ks] qs = sqrt(d0s_strength*square(L0s*xs) + d1s_strength*square(L1s*xs) + d2s_strength*square(L2s*xs));
 	vector<lower=0>[Kp] qp = sqrt(d0p_strength*square(L0p*xp_raw) + d1p_strength*square(L1p*xp_raw) + d2p_strength*square(L2p*xp_raw));
@@ -92,7 +94,7 @@ model {
 	ups_s_raw ~ inv_gamma(ups_alpha,ups_beta);
 	ups_p_raw ~ inv_gamma(ups_alpha,ups_beta);
 	Rinf_raw ~ std_normal();
-	induc ~ std_normal();
+	induc_raw ~ std_normal();
 	qs ~ normal(0,ups_s);
 	qp ~ normal(0,ups_p);
 	dups_s ~ std_normal();
