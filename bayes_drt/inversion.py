@@ -131,7 +131,7 @@ class Inverter:
 		# other parameters
 		x0=None,weights=None,xtol=1e-3,max_iter=20,
 		scale_Z=True,nonneg=True,
-		dZ=True,dZ_power=0.5):
+		dZ=False,dZ_power=0.5):
 		"""
 		weights : str or array (default: None)
 			Weights for fit. Standard weighting schemes can be specified by passing 'modulus' or 'proportional'. 
@@ -677,7 +677,8 @@ class Inverter:
 		return min_lam
 		
 	def map_fit(self,frequencies,Z,part='both',scale_Z=True,init_from_ridge=False,nonneg_drt=False,outliers=False,
-		sigma_min=0.002,max_iter=50000,random_seed=1234,inductance_scale=1,fitY=False,Yscale=1,SA=False,SASY=False):
+		sigma_min=0.002,max_iter=50000,random_seed=1234,inductance_scale=1,outlier_lambda=5,
+		fitY=False,Yscale=1,SA=False,SASY=False):
 		"""
 		Obtain the maximum a posteriori estimate of the DRT (and all model parameters).
 		
@@ -706,13 +707,16 @@ class Inverter:
 		# prepare data for stan model
 		Z_scaled *= Yscale
 		dat = self._prep_stan_data(frequencies,Z_scaled,part,model_type,dist_mat,outliers,sigma_min,mode='optimize',
-			inductance_scale=inductance_scale,fitY=fitY,SA=SA,SASY=SASY)
+			inductance_scale=inductance_scale,outlier_lambda=outlier_lambda,
+			fitY=fitY,SA=SA,SASY=SASY)
 		
 		# get initial fit
-		"""NEED TO UPDATE"""
 		if init_from_ridge:
-			init = self._get_init_from_ridge(frequencies,Z,hl_beta=2.5,lambda_0=1e-2,nonneg=nonneg,outliers=outliers)
-			self._init_params = init()
+			if len(self.distributions) > 1:
+				raise ValueError('Ridge initialization can only be performed for single-distribution fits')
+			else:
+				init = self._get_init_from_ridge(frequencies,Z,hl_beta=2.5,lambda_0=1e-2,nonneg=nonneg_drt,outliers=outliers,inductance_scale=inductance_scale)
+				self._init_params = init()
 		elif outliers:
 			# initialize sigma_out near zero, everything else randomly
 			iv = {'sigma_out_raw':np.zeros(2*len(Z)) + 0.1}
@@ -769,7 +773,8 @@ class Inverter:
 		self.sigma_min = sigma_min
 		
 	def bayes_fit(self,frequencies,Z,part='both',scale_Z=True,init_from_ridge=False,nonneg_drt=False,outliers=False,sigma_min=0.002,
-			warmup=200,sample=200,chains=2,random_seed=1234,inductance_scale=1,fitY=False,Yscale=1,SA=False,SASY=False):
+			warmup=200,sample=200,chains=2,random_seed=1234,inductance_scale=1,outlier_lambda=10,
+			fitY=False,Yscale=1,SA=False,SASY=False):
 			
 		# load stan model
 		model,model_str = self._get_stan_model(nonneg_drt,outliers,fitY,SA)
@@ -785,13 +790,16 @@ class Inverter:
 		# prepare data for stan model
 		Z_scaled *= Yscale
 		dat = self._prep_stan_data(frequencies,Z_scaled,part,model_type,dist_mat,outliers,sigma_min,mode='sample',
-			inductance_scale=inductance_scale,fitY=fitY,SA=SA,SASY=SASY)
+			inductance_scale=inductance_scale,outlier_lambda=outlier_lambda,
+			fitY=fitY,SA=SA,SASY=SASY)
 		
 		# get initial fit
-		"""NEED TO UPDATE"""
 		if init_from_ridge:
-			init = self._get_init_from_ridge(frequencies,Z,hl_beta=2.5,lambda_0=1e-2,nonneg=nonneg,outliers=outliers)
-			self._init_params = init()
+			if len(self.distributions) > 1:
+				raise ValueError('Ridge initialization can only be performed for single-distribution fits')
+			else:
+				init = self._get_init_from_ridge(frequencies,Z,hl_beta=2.5,lambda_0=1e-2,nonneg=nonneg_drt,outliers=outliers,inductance_scale=inductance_scale)
+				self._init_params = init()
 		# elif outliers:
 			# # initialize sigma_out near zero, everything else randomly
 			# iv = {'sigma_out_raw':np.zeros(2*len(Z)) + 0.1}
@@ -886,7 +894,7 @@ class Inverter:
 		return model, model_str
 		
 			
-	def _get_init_from_ridge(self,frequencies,Z,hl_beta,lambda_0,nonneg,outliers):
+	def _get_init_from_ridge(self,frequencies,Z,hl_beta,lambda_0,nonneg,outliers,inductance_scale):
 		"""Get initial parameter estimate from ridge_fit
 		Parameters:
 		-----------
@@ -906,12 +914,22 @@ class Inverter:
 		# get initial parameter values from ridge fit
 		self.ridge_fit(frequencies,Z,hyper_lambda=True,penalty='integral',reg_ord=2,scale_Z=True,dZ=True,
 			   hl_beta=hl_beta,lambda_0=lambda_0,nonneg=nonneg)
-		iv = {'beta':self.coef_[2:]/self._Z_scale}
-		iv['tau_raw'] = np.zeros(self.A_re.shape[1]-2) + 1
-		iv['hfr_raw'] = self.coef_[0]/(100*self._Z_scale)
-		iv['induc'] = self.coef_[1]/self._Z_scale
+		dist_name = list(self.distributions.keys())[0]
+		dist_type = self.distributions[dist_name]['dist_type']
+		# scale the coefficients
+		coef = self.distribution_fits[dist_name]['coef']
+		if dist_type=='series':
+			x_star = coef/self._Z_scale
+		elif dist_type=='parallel':
+			x_star = coef*self._Z_scale
+		iv = {'x':x_star}
+		iv['ups_raw'] = np.zeros(len(x_star)) + 1
+		iv['Rinf'] = self.R_inf/self._Z_scale
+		iv['Rinf_raw'] = iv['Rinf']/100
+		iv['induc'] = self.inductance/self._Z_scale
 		if iv['induc'] <= 0:
 			iv['induc'] = 1e-10
+		iv['induc_raw'] = iv['induc']/inductance_scale
 		if outliers:
 			iv['sigma_out_raw'] = np.zeros(2*len(Z)) + 0.1
 		def init_func():
@@ -919,7 +937,7 @@ class Inverter:
 
 		return init_func
 		
-	def _prep_stan_data(self,frequencies,Z,part,model_type,dist_mat,outliers,sigma_min,mode,inductance_scale,fitY,SA,SASY):
+	def _prep_stan_data(self,frequencies,Z,part,model_type,dist_mat,outliers,sigma_min,mode,inductance_scale,outlier_lambda,fitY,SA,SASY):
 		"""Prepare input data for Stan model. Called by map_fit and bayes_fit methods
 		
 		Parameters:
@@ -1103,10 +1121,11 @@ class Inverter:
 				# # print('x_scale:',dat['x_scale'])
 				
 			if outliers:
-				if mode=='optimize':
-					dat['so_invscale'] = 5
-				elif mode=='sample':
-					dat['so_invscale'] = 10
+				dat['so_invscale'] = outlier_lambda
+				# if mode=='optimize':
+					# dat['so_invscale'] = 5
+				# elif mode=='sample':
+					# dat['so_invscale'] = 10
 					
 		elif model_type=='Series-Parallel':
 			if len(self.distributions) > 2:
@@ -1178,10 +1197,11 @@ class Inverter:
 				  }
 				
 			if outliers:
-				if mode=='optimize':
-					dat['so_invscale'] = 5
-				elif mode=='sample':
-					dat['so_invscale'] = 10
+				dat['so_invscale'] = outlier_lambda
+				# if mode=='optimize':
+					# dat['so_invscale'] = 5
+				# elif mode=='sample':
+					# dat['so_invscale'] = 10
 					
 		elif model_type=='Series-2Parallel':
 			ser_name = [k for k,v in self.distributions.items() if v['dist_type']=='series'][0]
@@ -1267,10 +1287,11 @@ class Inverter:
 				  }
 				
 			if outliers:
-				if mode=='optimize':
-					dat['so_invscale'] = 5
-				elif mode=='sample':
-					dat['so_invscale'] = 10
+				dat['so_invscale'] = outlier_lambda
+				# if mode=='optimize':
+					# dat['so_invscale'] = 5
+				# elif mode=='sample':
+					# dat['so_invscale'] = 10
 					
 		elif model_type=='MultiDist':
 			"""placeholder"""
@@ -1337,10 +1358,11 @@ class Inverter:
 				  }
 				
 			if outliers:
-				if mode=='optimize':
-					dat['so_invscale'] = 5
-				elif mode=='sample':
-					dat['so_invscale'] = 10
+				dat['so_invscale'] = outlier_lambda
+				# if mode=='optimize':
+					# dat['so_invscale'] = 5
+				# elif mode=='sample':
+					# dat['so_invscale'] = 10
 			  
 		return dat
 			  
