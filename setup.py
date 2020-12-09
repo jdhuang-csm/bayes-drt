@@ -20,5 +20,6 @@ setup(name='bayes_drt',
 		'cvxopt',
 		'pystan',
 		'matplotlib'
-		]
+		],
+	include_package_data=True
 	)
