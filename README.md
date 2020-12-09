@@ -17,9 +17,9 @@ The methods implemented in `bayes_drt` are the subject of a manuscript submitted
 * `code_EchemActa` contains the code used to simulate data, estimate the DRT and DDT using `bayes_drt`, apply several other inversion methods from the literature to the same data for comparison, and generate figures.
 
 ## Installation
-The easiest way to install `bayes_drt` is to first clone or download the repository to your computer, and then install it using `pip`. To clone or download the repository, click the green "Code" button at the upper right. Once the repository is on your computer, nagivate to the top-level bayes_drt directory and install it via `pip`:
+The easiest way to install `bayes_drt` is to first clone or download the repository to your computer, and then install it using the `setup.py` file. To clone or download the repository, click the green "Code" button at the upper right. Once the repository is on your computer, nagivate to the top-level bayes_drt directory and install it with the following command:
 
-    pip install .
+    python setup.py install
     
 *Note:* `bayes_drt` requires `pystan`, which requires a C++ compiler for Windows systems. If you're running Windows and already have a C++ compiler installed, such as the MingW-w64 C++ compiler, the above command should work. If you do not have a working C++ compiler, you will need to install one before installing `bayes_drt`. This can be done via the command `conda install libpython m2w64-toolchain -c msys2` if you're using Anaconda. See https://pystan.readthedocs.io/en/latest/windows.html#windows for more details.
 
