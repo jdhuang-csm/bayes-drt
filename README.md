@@ -38,7 +38,7 @@ These packages will be automatically installed (if necessary) when you install `
 If you run into any issues using the package, please feel free to raise an issue, and I will do my best to help you solve it. Additionally, if you would like to apply the method for more complex analyses, please reach out - I would be happy to help get an appropriate model set up for your use case. 
 
 ## Citing `bayes_drt`
-If you use `bayes_drt` to obtain results which are published in or used for an academic journal article, please cite the following:
+If you use `bayes_drt` for published work, please consider citing the following paper:
 * Huang, J., Papac, M., and O'Hayre, R. (2020). Towards robust autonomous impedance spectroscopy analysis: a calibrated hierarchical Bayesian approach for electrochemical impedance spectroscopy (EIS) inversion. Electrochimica Acta, *in press*.
 
 Additionally, if you use the `ridge_fit` method with `hyper_lambda=True` or `hyper_w=True`, please cite the corresponding work below:
