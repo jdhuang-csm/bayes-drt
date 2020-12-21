@@ -12,7 +12,7 @@ The package also provides ordinary and hyperparametric ridge regression methods,
 Several tutorials are available in `tutorials`. Additional examples and documentation will be added soon. If GitHub fails to display the tutorials ("Sorry, something went wrong. Reload?"), you can view them by going to https://nbviewer.jupyter.org/ and pasting the URL for the desired tutorial in the search bar.
 
 ## *Electrochimica Acta* article
-The methods implemented in `bayes_drt` are the subject of a manuscript submitted to *Electrochimica Acta* in Aug. 2020. The theory behind the model is described in detail in the journal article. All code used to generate the results in the manuscript are available here:
+The methods implemented in `bayes_drt` are the subject of an article in *Electrochimica Acta* (https://doi.org/10.1016/j.electacta.2020.137493). The theory behind the model is described in detail in the journal article. All code used to generate the results in the manuscript are available here:
 * `data` contains all experimental and simulated data files.
 * `code_EchemActa` contains the code used to simulate data, estimate the DRT and DDT using `bayes_drt`, apply several other inversion methods from the literature to the same data for comparison, and generate figures.
 
@@ -32,7 +32,10 @@ The easiest way to install `bayes_drt` is to first clone or download the reposit
 * cvxopt
 * pystan
 
-These packages will be automatically installed (if necessary) by `pip` when you install `bayes_drt`.
+These packages will be automatically installed (if necessary) when you install `bayes_drt`.
+
+## Issues?
+If you run into any issues using the package, please feel free to raise an issue, and I will do my best to help you solve it. Additionally, if you would like to apply the method for more complex analyses, please reach out - I would be happy to help get an appropriate model set up for your use case. 
 
 ## Citing `bayes_drt`
 If you use `bayes_drt` to obtain results which are published in or used for an academic journal article, please cite the following:
