@@ -23,7 +23,6 @@ model_dict = {
 	# Pure parallel models
 	'Parallel_StanModel.pkl':'Parallel_modelcode.txt',
 	'Parallel_outliers_StanModel.pkl':'Parallel_outliers_modelcode.txt',
-	'Parallel_SA_StanModel.pkl':'Parallel_SA_modelcode.txt',
 	'Parallel_fitY_StanModel.pkl':'Parallel_fitY_modelcode.txt',
 	'Parallel_fitY_SA_StanModel.pkl':'Parallel_fitY_SA_modelcode.txt',
 	# Mixed series-parallel models
@@ -33,8 +32,6 @@ model_dict = {
 	'Series-Parallel_outliers_StanModel.pkl':'Series-Parallel_outliers_modelcode.txt',
 	'Series-2Parallel_StanModel.pkl':'Series-2Parallel_modelcode.txt',
 	'Series-2Parallel_pos_StanModel.pkl':'Series-2Parallel_pos_modelcode.txt',
-	'MultiDist_StanModel.pkl':'MultiDist_modelcode.txt'
-	# 'Series-Parallel_pos_StanModel_qsum.pkl':'Series-Parallel_pos_modelcode_qsum.txt'
 	}
      
 for pkl, code_file in model_dict.items():	
