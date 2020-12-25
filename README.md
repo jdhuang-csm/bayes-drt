@@ -20,7 +20,9 @@ The methods implemented in `bayes_drt` are the subject of an article in *Electro
 The easiest way to install `bayes_drt` is to first clone or download the repository to your computer, and then install with `pip`. To clone or download the repository, click the green "Code" button at the upper right. Once the repository is on your computer, nagivate to the top-level bayes_drt directory and install it with the following command:
 
     pip install .
-    
+
+The first time you import `bayes_drt`, several model files will automatically be compiled, which will take some time (~20 minutes). However, once compiled, the model files will be stored with the package and will not need to be recompiled. If you encounter an error message such as "WARNING:pystan:MSVC compiler is not supported" or "distutils.errors.DistutilsPlatformError: Unable to find vcvarsall.bat" during this step, see the note below - you may be missing a necessary compiler. 
+
 *Note:* `bayes_drt` requires `pystan`, which requires a C++ compiler for Windows systems. If you're running Windows and already have a C++ compiler installed, such as the MingW-w64 C++ compiler, the above command should work. If you do not have a working C++ compiler, you will need to install one before installing `bayes_drt`. This can be done via the command `conda install libpython m2w64-toolchain -c msys2` if you're using Anaconda. See https://pystan.readthedocs.io/en/latest/windows.html#windows for more details.
 
 ### Dependencies
