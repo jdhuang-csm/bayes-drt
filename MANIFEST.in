@@ -1,4 +1,4 @@
-include bayes_drt/stan_model_files/*
+include bayes_drt/stan_model_files/*.txt
 include LICENSE
 include README.md
 exclude bayes_drt/stan_model_files/*FreqDependent*
