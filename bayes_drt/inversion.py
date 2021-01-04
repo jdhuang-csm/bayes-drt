@@ -65,8 +65,10 @@ class Inverter:
 				dist_type: 'series' or 'parallel' (default 'parallel'). Valid for DDT only
 				symmetry: 'planar' or 'spherical' (default 'planar'). Valid for DDT only
 				bc: 'transmissive' or 'blocking' (default 'transmissive'). Valid for DDT only
-				ct: boolean indicating whether there is a simultaneous charge transfer reaction (default False). Valid for DDT only
-				k_ct: apparent 1st-order rate constant for simultaneous charge transfer reaction. Required for DDT if ct==True
+				ct: boolean indicating whether there is a simultaneous charge transfer reaction (default False). 
+					Valid for DDT only
+				k_ct: apparent 1st-order rate constant for simultaneous charge transfer reaction. 
+					Required for DDT if ct==True
 				basis_freq: array of frequencies to use as basis. If not specified, use self.basis_freq
 				epsilon: epsilon value for basis functions. If not specified, use self.epsilon
 		"""
