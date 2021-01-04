@@ -2119,10 +2119,16 @@ class Inverter:
 			else:
 				# just calculate Z at very high and very low frequencies and take the difference in Z'
 				# could do calcs using coefficients, but this is fast and accurate enough for now (and should work for any arbitrary distribution)
-				Z_range = self.predict_Z(np.array([1e20,1e-20]),distributions=distributions,percentile=percentile)
-				Rp = np.real(Z_range[1] - Z_range[0])
+				if percentile is None:
+					Z_range = self.predict_Z(np.array([1e20,1e-20]),distributions=distributions)
+					Rp = np.real(Z_range[1] - Z_range[0])
+				else:
+					# get the distribution of Rp
+					Z_mat = self.predict_Z_distribution(np.array([1e20,1e-20]),distributions)
+					Rp_sample = np.real(Z_mat[:,1] - Z_mat[:,0])
+					Rp = np.percentile(Rp_sample,percentile)
 				
-		return Rp
+		return Rp 
 		
 	def predict_sigma(self,frequencies,percentile=None):
 		if percentile is not None and self.fit_type!='bayes':
