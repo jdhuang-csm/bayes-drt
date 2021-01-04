@@ -1071,6 +1071,12 @@ def get_scale_factor(df):
 	Z_ord = np.floor(np.log10(Z_max)/3)
 	return 10**(3*Z_ord)
 	
+def get_factor_from_unit(unit_scale):
+	unit_map = {-2:'$\mu$',-1:'m',0:'',1:'k',2:'M',3:'G'}
+	pwr_map = {v:k for k,v in unit_map.items()}
+	pwr = pwr_map[unit_scale]
+	return 10**(3*pwr)
+	
 def get_common_unit_scale(df_list,aggregate='min'):
 	"""
 	Get common unit scale for multiple datasets
@@ -1137,6 +1143,8 @@ def plot_ocv(datadir, filter_func=None, files=None, ax=None, invert='auto', same
 def plot_jv(df,area=None,plot_pwr=False,ax=None,pwr_kw={'ls':'--'},**plt_kw):
 	if ax is None:
 		fig, ax = plt.subplots()
+	else:
+		fig = ax.get_figure()
 	if area is not None:
 		# if area given, convert to densities
 		df = df.copy()
@@ -1145,10 +1153,10 @@ def plot_jv(df,area=None,plot_pwr=False,ax=None,pwr_kw={'ls':'--'},**plt_kw):
 		
 	ax.plot(1000*df['Im'].abs(),df['Vf'].abs(),**plt_kw)
 	if area is None:
-		ax.set_xlabel('Current (mA)')
+		ax.set_xlabel('$j$ / mA')
 	else:
-		ax.set_xlabel('Current Density (mA/cm$^2$)')
-	ax.set_ylabel('Voltage (V)')
+		ax.set_xlabel('$j$ / mA$\cdot$cm$^{-2}$')
+	ax.set_ylabel('$V$ / V')
 	if 'label' in plt_kw.keys():
 		ax.legend()
 	
@@ -1170,9 +1178,14 @@ def plot_jv(df,area=None,plot_pwr=False,ax=None,pwr_kw={'ls':'--'},**plt_kw):
 		ax2.plot(1000*df['Im'].abs(),1000*df['Pwr'].abs().values,**pwr_kw)
 		
 		if area is None:
-			ax2.set_ylabel('Power (mW)')
+			ax2.set_ylabel('$P$ / mW')
 		else:
-			ax2.set_ylabel('Power Density (mW/cm$^2$)')
+			ax2.set_ylabel('$P$ / mW$\cdot$cm$^{-2}$')
+			
+		ax2.set_ylim(0,ax2.get_ylim()[1])
+		
+	fig.tight_layout()
+	
 	return ax
 	
 def plot_nyquist(df,area=None,ax=None,label='',plot_func='scatter',unit_scale='auto',label_size=10,eq_xy=True,**kw):
