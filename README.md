@@ -41,8 +41,8 @@ If you run into any issues using the package, please feel free to raise an issue
 
 ## Citing `bayes_drt`
 If you use `bayes_drt` for published work, please consider citing the following paper:
-* Huang, J., Papac, M., and O'Hayre, R. (2020). Towards robust autonomous impedance spectroscopy analysis: a calibrated hierarchical Bayesian approach for electrochemical impedance spectroscopy (EIS) inversion. Electrochimica Acta, *in press*.
+* Huang, J., Papac, M., and O'Hayre, R. (2020). Towards robust autonomous impedance spectroscopy analysis: a calibrated hierarchical Bayesian approach for electrochemical impedance spectroscopy (EIS) inversion. *Electrochimica Acta, 367,* 137493. https://doi.org/10.1016/j.electacta.2020.137493
 
 Additionally, if you use the `ridge_fit` method with `hyper_lambda=True` or `hyper_w=True`, please cite the corresponding work below:
-* `hyper_lambda=True`: Ciucci, F., & Chen, C. (2015). Analysis of electrochemical impedance spectroscopy data using the distribution of relaxation times: A Bayesian and hierarchical Bayesian approach. Electrochimica Acta, 167, 439–454. https://doi.org/10.1016/j.electacta.2015.03.123
-* `hyper_w=True`: Effat, M. B., & Ciucci, F. (2017). Bayesian and Hierarchical Bayesian Based Regularization for Deconvolving the Distribution of Relaxation Times from Electrochemical Impedance Spectroscopy Data. Electrochimica Acta, 247, 1117–1129. https://doi.org/10.1016/J.ELECTACTA.2017.07.050
+* `hyper_lambda=True`: Ciucci, F., & Chen, C. (2015). Analysis of electrochemical impedance spectroscopy data using the distribution of relaxation times: A Bayesian and hierarchical Bayesian approach. *Electrochimica Acta, 167,* 439–454. https://doi.org/10.1016/j.electacta.2015.03.123
+* `hyper_w=True`: Effat, M. B., & Ciucci, F. (2017). Bayesian and Hierarchical Bayesian Based Regularization for Deconvolving the Distribution of Relaxation Times from Electrochemical Impedance Spectroscopy Data. *Electrochimica Acta, 247,* 1117–1129. https://doi.org/10.1016/J.ELECTACTA.2017.07.050
