@@ -276,7 +276,7 @@ def read_eis_zdata(file):
 		data = data.rename(rename,axis=1)
 		
 		# calculate Zmod and Zphz
-		Zmod, Zphz = bode_from_complex(data)
+		Zmod, Zphz = polar_from_complex(data)
 		data['Zmod'] = Zmod
 		data['Zphz'] = Zphz
 	
@@ -395,7 +395,7 @@ def read_ocv_data(file,file_type='auto'):
 	if file_type=='auto':
 		file_type = os.path.basename(file).split('_')[0].lower()[:3]
 	#find start (and end, if needed) of ocv data
-	if file_type=='ocv':
+	if file_type in ('ocv','ocp'):
 		cidx = txt.find('CURVE\tTABLE')
 		skipfooter = 0
 	elif file_type=='eis':
@@ -546,7 +546,7 @@ def get_cell_name(datadir):
 # Data processing
 #---------------------------------
 
-def bode_from_complex(data):
+def polar_from_complex(data):
 	if type(data)==pd.core.frame.DataFrame:
 		Zmod = (data['Zreal'].values**2 + data['Zimag'].values**2)**0.5
 		Zphz = (180/np.pi)*np.arctan(data['Zimag'].values/data['Zreal'].values)
@@ -556,7 +556,7 @@ def bode_from_complex(data):
 		
 	return Zmod, Zphz
 	
-def complex_from_bode(data):
+def complex_from_polar(data):
 	if type(data)==pd.core.frame.DataFrame:
 		Zmod = data['Zmod'].values
 		Zphz = data['Zphz'].values
@@ -1099,7 +1099,7 @@ def plot_ocv(datadir, filter_func=None, files=None, ax=None, invert='auto', same
 	#get files
 	if filter_func is None and files is None:
 		#if no filter or files specified, get all OCV files
-		filter_func = lambda x: x[0:3]=='OCV' and x[-3:]=='DTA'
+		filter_func = lambda x: x[0:3] in ('OCV','OCP') and x[-3:]=='DTA'
 		files = [f for f in os.listdir(datadir) if filter_func(f)]
 	elif files and not filter_func:
 		if type(files)==str:
@@ -1137,8 +1137,8 @@ def plot_ocv(datadir, filter_func=None, files=None, ax=None, invert='auto', same
 			
 		ax.plot(ts_func(df['timestamp']),V_sign*df['Vf'],**plt_kw)
 
-	ax.set_xlabel('Time (h)')
-	ax.set_ylabel('OCV (V)')
+	ax.set_xlabel('Time / h')
+	ax.set_ylabel('OCV / V')
 	
 def plot_jv(df,area=None,plot_pwr=False,ax=None,pwr_kw={'ls':'--'},**plt_kw):
 	if ax is None:
@@ -1182,9 +1182,12 @@ def plot_jv(df,area=None,plot_pwr=False,ax=None,pwr_kw={'ls':'--'},**plt_kw):
 		else:
 			ax2.set_ylabel('$P$ / mW$\cdot$cm$^{-2}$')
 			
-		ax2.set_ylim(0,ax2.get_ylim()[1])
+		ax2.set_ylim(0,max(np.max(1000*df['Pwr'].abs().values)*1.1,ax2.get_ylim()[1]))
 		
 	fig.tight_layout()
+	
+	ax.set_xlim(0,max(1.1*np.max(1000*df['Im'].abs()),ax.get_xlim()[1]))
+	ax.set_ylim(0,max(1.1*np.max(df['Vf'].abs()),ax.get_ylim()[1]))
 	
 	return ax
 	
@@ -1272,7 +1275,7 @@ def plot_nyquist(df,area=None,ax=None,label='',plot_func='scatter',unit_scale='a
 		elif xscale > yscale:
 			# expand the y axis
 			diff = (xscale - yscale)*height
-			if np.min(-df['Zimag']) >= 0:
+			if min(np.min(-df['Zimag']),ax.get_ylim()[0]) >= 0:
 				# if -Zimag doesn't go negative, don't go negative on y-axis
 				ymin = max(0,ax.get_ylim()[0] - diff/2)
 				mindelta = ax.get_ylim()[0] - ymin
