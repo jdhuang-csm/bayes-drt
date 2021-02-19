@@ -124,6 +124,7 @@ class Inverter:
 		
 		
 	def ridge_fit(self,frequencies,Z,part='both',penalty='discrete',reg_ord=2,L1_penalty=0,
+		scale_Z=True,nonneg=True,weights=None,xtol=1e-3,max_iter=20,
 		# hyper_lambda parameters
 		hyper_lambda=True,hl_solution='analytic',hl_beta=2.5,hl_fbeta=None,lambda_0=1e-2,cv_lambdas=np.logspace(-10,5,31),
 		# hyper_weights parameters
@@ -131,15 +132,87 @@ class Inverter:
 		# gamma distribution hyperparameters
 		hyper_a=False,alpha_a=2,hl_beta_a=2,hyper_b=False,sb=1,
 		# other parameters
-		x0=None,weights=None,xtol=1e-3,max_iter=20,
-		scale_Z=True,nonneg=True,
-		dZ=False,dZ_power=0.5):
+		x0=None,dZ=False,dZ_power=0.5):
 		"""
+		Perform ridge fit. Only valid for single-distribution fits.
+		
+		Parameters:
+		-----------
+		frequencies: array
+			Measured frequencies
+		Z: complex array
+			Measured (complex) impedance values
+		part: str, optional (default: 'both')
+			Which part of the impedance data to fit. Options: 'both', 'real', 'imag'
+		penalty: str, optional (default: 'discrete')
+			Type of penalty matrix to apply to the coefficients. Options:
+				'discrete': Applies a matrix that yields the derivative of the distribution at discrete values of tau
+				'integral': Applies a matrix that yields the integral of the squared derivative of the distribution across all tau
+				'cholesky': Applies the Cholesky decomposition of the integral matrix. Tends to induce asymmetry; not recommended
+		reg_ord: int or list, optional (default: 2)
+			Order of the derivative to regularize. If int, penalize the nth derivative.
+			If list, the penalty will consist of a weighted sum of the 0th-2nd derivatives. 
+			The list must be length 3, with the first entry indicating the weight of the 0th derivative, 
+			2nd entry indicating the weight of the 1st derivative, and 3rd entry indicating the weight of the 2nd derivative.
+		L1_penalty: float, optional (default: 0)
+			Magnitude of L1 (LASSO) penalty to apply to coefficients. 
+			If L1_penalty > 0, the fit becomes an elastic net regression
+		scale_Z: bool, optional (default: True)
+			If True, scale impedance by the factor sqrt(N)/std(|Z|) to normalize for magnitude and sample size
+		nonneg: bool, optional (default: False)
+			If True, constrain the distribution to non-negative values
 		weights : str or array (default: None)
 			Weights for fit. Standard weighting schemes can be specified by passing 'modulus' or 'proportional'. 
 			Custom weights can be passed as an array. If the array elements are real, the weights are applied to both the real and imaginary parts of the impedance.
 			If the array elements are complex, the real parts are used to weight the real impedance, and the imaginary parts are used to weight the imaginary impedance.
 			If None, all points are weighted equally.
+		xtol: float, optional (default: 1e-3)
+			Coefficient tolerance for iterative optimization (hyper_lambda or hyper_weights). 
+			Optimization stops when mean change in coefficients drops below xtol
+		max_iter: int, optional (default: 20)
+			Maximum iterations to perform for hyper_lambda or hyper_weights fits
+			
+		hyper_lambda parameters:
+		-------------------------
+		hyper_lambda: bool, optional (default: True)
+			If True, allow the regularization parameter lambda to vary with tau (hierarchical ridge).
+			See https://www.sciencedirect.com/science/article/pii/S0013468617314676 for details.
+			If False, perform ordinary ridge regression
+		hl_solution: str, optional (default: 'analytic')
+			Solution method for determining lambda values when hyper_lambda==True. Options:
+				'analytic': Use analytic solution. Generally works well
+				'lm': Use Levenberg-Marquardt algorithm. May help avoid oscillation 
+				arising from analytic solution in some cases
+		hl_beta: float, optional (default: 2.5)
+			Beta hyperparameter of gamma prior for hyper_lambda method.
+			Smaller values allow greater variation in the regularization parameter lambda.
+			If penalty is 'discrete' or 'cholesky', hl_beta > 1.
+			If penalty=='integral', hl_beta > 2
+		hl_fbeta: float, optional (default: None)
+			If specified, ignore hl_beta and instead set the f_beta hyperparameter, which 
+			normalizes for the magnitude of the penalty for the recovered distribution.
+			Smaller values allow greater variation in the regularization parameter lambda.
+			See http://dx.doi.org/10.1016/j.electacta.2015.03.123 Eqs. 35-36 for details
+		lambda_0: float, optional (default: 1e-2)	
+			lambda_0 hyperparameter for hyper_lambda method.
+			Larger values result in stronger baseline level of regularization.
+			If lambda_0=='cv', perform Re-Im cross-validation to estimate the optimal lambda_0.
+		cv_lambdas: array, optional (default: np.logspace(-10,5,31))
+			lambda_0 grid for Re-Im cross-validation if lambda_0=='cv'
+		
+		hyper_weights parameters:
+		-------------------------
+		hyper_weights: bool, optional (default: False)
+			If true, optimize weights along with coefficients.
+			Allows for outlier identification and estimation of relative error structure.
+			See https://www.sciencedirect.com/science/article/pii/S0013468617314676 for details
+		hw_beta: float, optional (default: 2)
+			beta hyperparameter of gamma prior for hyper_weights method.
+			Smaller values allow weights to approach zero (outlier) more easily.
+			Must be greater than 1
+		hw_wbar: float, optional (default: 1)
+			Expectation value of gamma prior on weights
+		
 		"""
 		# checks
 		if penalty in ('discrete','cholesky'):
@@ -682,7 +755,7 @@ class Inverter:
 		sigma_min=0.002,max_iter=50000,random_seed=1234,inductance_scale=1,outlier_lambda=5,
 		fitY=False,Yscale=1,SA=False,SASY=False):
 		"""
-		Obtain the maximum a posteriori estimate of the DRT (and all model parameters).
+		Obtain the maximum a posteriori estimate of the defined distribution(s) (and all model parameters).
 		
 		Parameters:
 		-----------
@@ -693,7 +766,29 @@ class Inverter:
 		part: str, optional (default: 'both')
 			Which part of the impedance data to fit. Options: 'both', 'real', 'imag'
 		scale_Z: bool, optional (default: True)
-			
+			If True, scale impedance by the factor sqrt(N)/std(|Z|) to normalize for magnitude and sample size
+		init_from_ridge: bool, optional (default: False)
+			If True, use the hyperparametric ridge solution to initialize the Bayesian fit. 
+			Only valid for single-distribution fits
+		nonneg_drt: bool, optional (default: False)
+			If True, constrain the DRT to non-negative values
+		outliers: bool, optional (default: False)
+			If True, enable outlier identification via independent error contribution variable
+		sigma_min: float, optional (default: 0.002)
+			Impedance error floor. This is necessary to avoid sampling/optimization errors.
+			Values smaller than the default (0.002) may enable slightly closer fits of very clean data,
+			but may also result in sampling/optimization errors that yield unexpected results.
+		max_iter: int, optional (default: 50000)
+			Maximum number of iterations to allow the optimizer to perform
+		random_seed: int, optional (default: 1234)
+			Random seed for optimizer
+		inductance_scale: float, optional (default: 1)
+			Scale (std of normal prior) of the inductance. Lower values will constrain the inductance,
+			which may be helpful if the estimated inductance is anomalously large (this may occur if your
+			measured impedance data does not extend to high frequencies, i.e. 1e5-1e6 Hz)
+		outlier_lambda: float, optional (default: 5)
+			Lambda parameter (inverse scale) of the exponential prior on the outlier error contribution.
+			Smaller values will make it easier for points to be flagged as outliers 
 		"""
 		# load stan model
 		model,model_str = self._get_stan_model(nonneg_drt,outliers,fitY,SA)
@@ -777,7 +872,49 @@ class Inverter:
 	def bayes_fit(self,frequencies,Z,part='both',scale_Z=True,init_from_ridge=False,nonneg_drt=False,outliers=False,sigma_min=0.002,
 			warmup=200,sample=200,chains=2,random_seed=1234,inductance_scale=1,outlier_lambda=10,
 			fitY=False,Yscale=1,SA=False,SASY=False):
-			
+		"""
+		Obtain an estimate of the posterior distribution of the defined physical distributions (and all model parameters).
+		
+		Parameters:
+		-----------
+		frequencies: array
+			Measured frequencies
+		Z: complex array
+			Measured (complex) impedance values
+		part: str, optional (default: 'both')
+			Which part of the impedance data to fit. Options: 'both', 'real', 'imag'
+		scale_Z: bool, optional (default: True)
+			If True, scale impedance by the factor sqrt(N)/std(|Z|) to normalize for magnitude and sample size
+		init_from_ridge: bool, optional (default: False)
+			If True, use the hyperparametric ridge solution to initialize the Bayesian fit. 
+			Only valid for single-distribution fits
+		nonneg_drt: bool, optional (default: False)
+			If True, constrain the DRT to non-negative values
+		outliers: bool, optional (default: False)
+			If True, enable outlier identification via independent error contribution variable
+		sigma_min: float, optional (default: 0.002)
+			Impedance error floor. This is necessary to avoid sampling/optimization errors.
+			Values smaller than the default (0.002) may enable slightly closer fits of very clean data,
+			but may also result in sampling/optimization errors that yield unexpected results.
+		warmup: int, optional (default: 200)
+			Number of warmup or burn-in samples to draw. These samples will not contribute to the 
+			returned posterior distribution
+		sample: int, optional (default: 200)
+			Number of samples to draw after warm-up. These samples constitute the estimate of the
+			posterior distribution. The total number of samples will be sample*chains
+		chains: int, optional (default: 2)
+			Number of chains to sample in parallel
+		random_seed: int, optional (default: 1234)
+			Random seed for sampler
+		inductance_scale: float, optional (default: 1)
+			Scale (std of normal prior) of the inductance. Lower values will constrain the inductance,
+			which may be helpful if the estimated inductance is anomalously large (this may occur if your
+			measured impedance data does not extend to high frequencies, i.e. 1e5-1e6 Hz)
+		outlier_lambda: float, optional (default: 10)
+			Lambda parameter (inverse scale) of the exponential prior on the outlier error contribution.
+			Smaller values will make it easier for points to be flagged as outliers 
+		"""
+		
 		# load stan model
 		model,model_str = self._get_stan_model(nonneg_drt,outliers,fitY,SA)
 		self.stan_model_name = model_str
