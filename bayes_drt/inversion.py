@@ -131,6 +131,8 @@ class Inverter:
 		hyper_weights=False,hw_beta=2,hw_wbar=1,
 		# gamma distribution hyperparameters
 		hyper_a=False,alpha_a=2,hl_beta_a=2,hyper_b=False,sb=1,
+		# correct_pahse_offset parameters
+		correct_phase_offset=False,IERange=None,lambda_phz=1,init_phase_offset=False,
 		# other parameters
 		x0=None,dZ=False,dZ_power=0.5):
 		"""
@@ -141,7 +143,7 @@ class Inverter:
 		frequencies: array
 			Measured frequencies
 		Z: complex array
-			Measured (complex) impedance values
+			Measured (complex) impedance values. Must have same length as frequencies
 		part: str, optional (default: 'both')
 			Which part of the impedance data to fit. Options: 'both', 'real', 'imag'
 		penalty: str, optional (default: 'discrete')
@@ -212,7 +214,20 @@ class Inverter:
 			Must be greater than 1
 		hw_wbar: float, optional (default: 1)
 			Expectation value of gamma prior on weights
-		
+			
+		correct_phase_offset parameters:
+		--------------------------------
+		correct_phase_offset: bool, optional (default: False)
+			If True, correct phase offsets that may occur due to changes in the 
+			hardware current range.
+		IERange: array, optional (default: None)
+			Array of I/E ranges (hardware current ranges, represented as ints) used to measure impedance.
+			Must have same length as frequencies. Required if correct_phase_offset==True
+		lambda_phz: float, optional (default: 1)
+			Inverse scale parameter for exponential prior on phase offsets.
+			Larger values regularize phase offsets more strongly, leading to smaller offset values.
+		init_phase_offset: bool, optional (default: False)
+			If True, estimate phase offsets and adjust Z before first DRT fit.
 		"""
 		# checks
 		if penalty in ('discrete','cholesky'):
@@ -230,9 +245,46 @@ class Inverter:
 		if len(self.distributions) > 1:
 			raise ValueError('ridge_fit cannot be used to fit multiple distributions')
 			
+		if correct_phase_offset and IERange is None:
+			raise ValueError('IERange must be provided if correct_phase_offset==True')
+			
 		self.distribution_fits = {}
 		
-		
+		# Get initial estimate of phase offset
+		if correct_phase_offset:
+			Z_exp = Z.copy()
+			Zphz_exp = np.angle(Z_exp,deg=True)
+			# find steps in IERange. Go from low frequency to high frequency
+			step_indices = np.where(np.diff(IERange[::-1])!=0)[0] + 1
+			# add last index
+			step_indices = np.append(step_indices,len(frequencies))
+			
+			# initialize offsets at zero
+			phase_offsets = np.zeros(len(step_indices))
+			offset_vec = np.zeros(len(Z))
+			Zphz_adj = Zphz_exp.copy()[::-1] # low to high freq
+			
+			"initial estimate seems to be unnecessary"
+			if init_phase_offset:
+				for i,idx in enumerate(step_indices[:-1]):
+					# recalculate diff
+					Zphz_diff = np.diff(Zphz_adj)
+					# interpolate the 1st discrete diff at the step
+					Zphz_diff_interp = (Zphz_diff[idx-2] + Zphz_diff[idx])/2
+					# use the interpolated diff to estimate the appropriate Zphz value after the step
+					Zphz_interp = Zphz_adj[idx-1] + Zphz_diff_interp
+					phase_offsets[i] = Zphz_interp - Zphz_adj[idx]
+					
+					# update offset vector and adjusted Zphz
+					offset_vec[idx:step_indices[i+1]] += phase_offsets[i]
+					Zphz_adj[idx:step_indices[i+1]] += phase_offsets[i]
+				
+			Zphz_adj = Zphz_adj[::-1]
+			offset_vec = offset_vec[::-1]
+			
+			Zmod = (Z*Z.conjugate())**0.5
+			Z = Zmod*np.cos(np.deg2rad(Zphz_adj)) + 1j*Zmod*np.sin(np.deg2rad(Zphz_adj))
+			Z_adj = Z.copy()
 		
 		# perform Re-Im CV to get optimal lambda_0
 		if lambda_0=='cv':
@@ -457,7 +509,70 @@ class Inverter:
 							hyper_lambda0s[n] = (2*hyper_as[n]-2)/hyper_bs[n]
 							hyper_hl_betas[n] = 2*hyper_as[n]
 				
-				
+				"""Correct phase offset"""
+				if correct_phase_offset and iter>0:
+					# get fitted Zphz
+					Z_pred = A_re@prev_coef + 1j*A_im@prev_coef
+					Zphz_pred = np.angle(Z_pred,deg=True)
+					# get current Zphz
+					Zphz = np.angle(Z,deg=True)
+					# estimate Zphz error variance
+					Zphz_var = np.var(Zphz - Zphz_pred)
+					# print('Var:',Zphz_var)
+					
+					# optimize phase_offsets
+					def fun(x,step_indices,Zphz_exp,Zphz_pred,lambda_phz):
+						offset_vec = np.zeros(len(frequencies))
+						Zphz_adj = Zphz_exp.copy()[::-1]
+						
+						for i,(idx,offset) in enumerate(zip(step_indices[:-1],x)):
+							offset_vec[idx:step_indices[i+1]] = offset
+							Zphz_adj[idx:step_indices[i+1]] += offset
+						
+						# resid = Zphz_adj - Zphz_pred[::-1]
+						# return resid
+						
+						# Zphz residual sum of squares
+						cost = 0.5*np.sum((Zphz_adj - Zphz_pred[::-1])**2)/Zphz_var
+						# exponential prior on offsets
+						cost += lambda_phz*np.sum(np.abs(x))
+						
+						return cost
+						
+					result = minimize(fun,x0=phase_offsets,args=(step_indices,Zphz_exp,Zphz_pred,lambda_phz))#,method='Nelder-Mead')
+					# result = least_squares(fun,x0=np.zeros(len(step_indices)+1),args=(step_indices,Zphz,Zphz_pred,lambda_phz),method='lm')
+					# print(result)
+					# print('cost:',fun(result['x'],))
+					
+					# get offsets
+					phase_offsets = result['x']
+					# print(phase_offsets)
+					offset_vec = np.zeros(len(frequencies))
+					Zphz_adj = Zphz_exp.copy()[::-1]
+					
+					for i,(idx,offset) in enumerate(zip(step_indices[:-1],phase_offsets)):
+						offset_vec[idx:step_indices[i+1]] = offset
+						Zphz_adj[idx:step_indices[i+1]] += offset
+						
+					Zphz_adj = Zphz_adj[::-1]
+					offset_vec = offset_vec[::-1]
+					
+					# overwrite Z_adj with adjusted phase
+					Zmod = (Z*Z.conjugate())**0.5
+					Z_adj = Zmod*np.cos(np.deg2rad(Zphz_adj)) + 1j*Zmod*np.sin(np.deg2rad(Zphz_adj))
+					
+					# handle scaling and weighting
+					if dist_info['dist_type']=='series':
+						# use impedance for series distributions (e.g. DRT)
+						target_adj = Z_adj.copy()
+					elif dist_info['dist_type']=='parallel':
+						# for parallel distributions, must fit admittance for linearity 
+						target_adj = 1/Z_adj.copy()
+						
+					target_adj *= target_scaled/target
+					
+					WT_re = W_re@target_adj.real
+					WT_im = W_im@target_adj.imag
 						
 				# solve for lambda
 				if penalty in ('discrete','cholesky'):
@@ -538,6 +653,11 @@ class Inverter:
 				
 				self._iter_history.append({'lambda_vectors':lam_vectors.copy(),'coef':coef.copy(),'fun':result['primal objective'],'cost':cost,'result':result,'dZ_re':dZ_re.copy(),
 										'hyper_bs':hyper_bs.copy(),'hyper_lambda0s':hyper_lambda0s.copy(),'hyper_hl_betas':hyper_hl_betas.copy()})
+				if correct_phase_offset:
+					self._iter_history[-1]['phase_offsets'] = phase_offsets.copy()
+					self._iter_history[-1]['offset_vec'] = offset_vec.copy()
+					self._iter_history[-1]['Zphz_adj'] = Zphz_adj.copy()
+					self._iter_history[-1]['Z_adj'] = Z_adj.copy()
 				
 				# check for convergence
 				coef_delta = (coef - prev_coef)/prev_coef
@@ -552,7 +672,7 @@ class Inverter:
 				
 				iter += 1
 			
-			cost_hist = [h['cost'] for h in self._iter_history]
+			# cost_hist = [h['cost'] for h in self._iter_history]
 			# if cost > np.min(cost_hist):
 				# best_idx = np.argmin(cost_hist)
 				# warnings.warn('Final log-likelihood is not the minimum. Reverting to iteration {}'.format(best_idx+1))
@@ -762,7 +882,7 @@ class Inverter:
 		frequencies: array
 			Measured frequencies
 		Z: complex array
-			Measured (complex) impedance values
+			Measured (complex) impedance values. Must have same length as frequencies
 		part: str, optional (default: 'both')
 			Which part of the impedance data to fit. Options: 'both', 'real', 'imag'
 		scale_Z: bool, optional (default: True)
@@ -791,7 +911,7 @@ class Inverter:
 			Smaller values will make it easier for points to be flagged as outliers 
 		"""
 		# load stan model
-		model,model_str = self._get_stan_model(nonneg_drt,outliers,fitY,SA)
+		model,model_str = self._get_stan_model(nonneg_drt,outliers,False,1,fitY,SA)
 		self.stan_model_name = model_str
 		model_type = model_str.split('_')[0]
 		if model_type=='Series-Parallel' and nonneg_drt==False:
@@ -806,6 +926,7 @@ class Inverter:
 		dat = self._prep_stan_data(frequencies,Z_scaled,part,model_type,dist_mat,outliers,sigma_min,mode='optimize',
 			inductance_scale=inductance_scale,outlier_lambda=outlier_lambda,
 			fitY=fitY,SA=SA,SASY=SASY)
+		self._stan_input = dat.copy()
 		
 		# get initial fit
 		if init_from_ridge:
@@ -869,6 +990,155 @@ class Inverter:
 		self.fit_type = 'map'
 		self.sigma_min = sigma_min
 		
+	def drift_map_fit(self,frequencies,Z,times,num_proc=1,part='both',scale_Z=True,init_from_ridge=False,nonneg_drt=False,outliers=False,
+		sigma_min=0.002,max_iter=50000,random_seed=1234,inductance_scale=1,outlier_lambda=5,
+		fitY=False,Yscale=1,SA=False,SASY=False):
+		"""
+		Obtain the maximum a posteriori estimate of the defined distribution(s) (and all model parameters).
+		
+		Parameters:
+		-----------
+		frequencies: array
+			Measured frequencies
+		Z: complex array
+			Measured (complex) impedance values. Must have same length as frequencies
+		part: str, optional (default: 'both')
+			Which part of the impedance data to fit. Options: 'both', 'real', 'imag'
+		scale_Z: bool, optional (default: True)
+			If True, scale impedance by the factor sqrt(N)/std(|Z|) to normalize for magnitude and sample size
+		init_from_ridge: bool, optional (default: False)
+			If True, use the hyperparametric ridge solution to initialize the Bayesian fit. 
+			Only valid for single-distribution fits
+		nonneg_drt: bool, optional (default: False)
+			If True, constrain the DRT to non-negative values
+		outliers: bool, optional (default: False)
+			If True, enable outlier identification via independent error contribution variable
+		sigma_min: float, optional (default: 0.002)
+			Impedance error floor. This is necessary to avoid sampling/optimization errors.
+			Values smaller than the default (0.002) may enable slightly closer fits of very clean data,
+			but may also result in sampling/optimization errors that yield unexpected results.
+		max_iter: int, optional (default: 50000)
+			Maximum number of iterations to allow the optimizer to perform
+		random_seed: int, optional (default: 1234)
+			Random seed for optimizer
+		inductance_scale: float, optional (default: 1)
+			Scale (std of normal prior) of the inductance. Lower values will constrain the inductance,
+			which may be helpful if the estimated inductance is anomalously large (this may occur if your
+			measured impedance data does not extend to high frequencies, i.e. 1e5-1e6 Hz)
+		outlier_lambda: float, optional (default: 5)
+			Lambda parameter (inverse scale) of the exponential prior on the outlier error contribution.
+			Smaller values will make it easier for points to be flagged as outliers 
+		"""
+		# load stan model
+		model,model_str = self._get_stan_model(nonneg_drt,outliers,True,num_proc,fitY,SA)
+		self.stan_model_name = model_str
+		model_type = model_str.split('_')[0]
+		if model_type=='Series-Parallel' and nonneg_drt==False:
+			warnings.warn('For mixed series-parallel models, it is highly recommended to set nonnneg_drt=True')
+
+		# perform scaling and weighting and get A and B matrices
+		frequencies, Z_scaled, WZ_re,WZ_im,W_re,W_im, dist_mat = self._prep_matrices(frequencies,Z,part,weights=None,dZ=False,
+			scale_Z=scale_Z,penalty='discrete',fit_type='map',sort_desc=False)
+		
+		# prepare data for stan model
+		Z_scaled *= Yscale
+		dat = self._prep_stan_data(frequencies,Z_scaled,part,model_type,dist_mat,outliers,sigma_min,mode='optimize',
+			inductance_scale=inductance_scale,outlier_lambda=outlier_lambda,
+			fitY=fitY,SA=SA,SASY=SASY)
+			
+		dat['time'] = times
+		dat['min_tau_x1'] = 500
+		dat['max_tau_x1'] = 10000
+		
+		self._stan_input = dat.copy()
+		
+		# get initial fit
+		if init_from_ridge:
+			if len(self.distributions) > 1:
+				raise ValueError('Ridge initialization can only be performed for single-distribution fits')
+			else:
+				init = self._get_init_from_ridge(frequencies,Z,hl_beta=2.5,lambda_0=1e-2,nonneg=nonneg_drt,outliers=outliers,inductance_scale=inductance_scale)
+				self._init_params = init()
+				dist_name = list(self.distributions.keys())[0]
+				iv_ridge = init()
+				iv_ridge['x0'] = iv_ridge['x'].copy()
+				iv_ridge['x1'] = iv_ridge['x'].copy()
+				iv_ridge['Rinf0_raw'] = iv_ridge['Rinf_raw']
+		if outliers:
+			# initialize sigma_out near zero, everything else randomly
+			iv = {'sigma_out_raw':np.zeros(2*len(Z)) + 0.1}
+			def init():
+				return iv
+		else:
+			init = 'random'
+			
+		# iv = {'log_tau_dx1':np.log(385),'log_tau_dx2':np.log(600),'log_tau_Rinf':np.log(600)}
+		iv = {'log_tau_x1':np.log(1000),'log_tau_x2':np.log(600),'log_tau_Rinf':np.log(600)}
+		if init_from_ridge:
+			iv.update(iv_ridge)
+		def init():
+			return iv
+		
+		
+		# optimize posterior
+		self._opt_result = model.optimizing(dat,iter=max_iter,seed=random_seed,init=init)
+		
+		# extract coefficients
+		self.distribution_fits = {}
+		if model_type in ['Series','Parallel']:
+			dist_name = [k for k,v in self.distributions.items() if v['dist_type']==model_type.lower()][0]
+			dist_type = self.distributions[dist_name]['dist_type']
+			self.distribution_fits[dist_name] = {'x0':self._rescale_coef(self._opt_result['x0'],dist_type)}
+			self.distribution_fits[dist_name]['x0'] *= Yscale
+			for n in range(1,num_proc+1):
+				self.distribution_fits[dist_name][f'x{n}'] = self._rescale_coef(self._opt_result[f'x{n}'],dist_type)
+				self.distribution_fits[dist_name][f'tau_x{n}'] = np.exp(self._opt_result[f'log_tau_x{n}'])
+			
+				self.distribution_fits[dist_name][f'x{n}'] *= Yscale
+				
+			if fitY:
+				self.R_inf = 0
+				self.inductance = 0
+			else:
+				# store R_inf vector for all times
+				self.R_inf = self._rescale_coef(self._opt_result['Rinf'],'series')
+				# R_inf is time-dependent - store parameters
+				self.Rinf_0 = self._rescale_coef(100*self._opt_result['Rinf0_raw'],'series')
+				self.delta_Rinf = self._rescale_coef(100*self._opt_result['dRinf_raw'],'series')
+				self.tau_Rinf = np.exp(self._opt_result['log_tau_Rinf'])
+				# inductance is constant
+				self.inductance = self._rescale_coef(self._opt_result['induc'],'series')
+		# elif model_type=='Series-Parallel':
+			# for dist_name,dist_info in self.distributions.items():
+				# if dist_info['dist_type']=='series':
+					# self.distribution_fits[dist_name] = {'coef':self._rescale_coef(self._opt_result['xs'],dist_info['dist_type'])}
+				# elif dist_info['dist_type']=='parallel':
+					# self.distribution_fits[dist_name] = {'coef':self._rescale_coef(self._opt_result['xp'],dist_info['dist_type'])}
+			# self.R_inf = self._rescale_coef(self._opt_result['Rinf'],'series')
+			# self.inductance = self._rescale_coef(self._opt_result['induc'],'series')
+		# elif model_type=='Series-2Parallel':
+			# for dist_name,dist_info in self.distributions.items():
+				# if dist_info['dist_type']=='series':
+					# self.distribution_fits[dist_name] = {'coef':self._rescale_coef(self._opt_result['xs'],dist_info['dist_type'])}
+				# elif dist_info['dist_type']=='parallel':
+					# order = dist_info['order']
+					# self.distribution_fits[dist_name] = {'coef':self._rescale_coef(self._opt_result[f'xp{order}'],dist_info['dist_type'])}
+			# self.R_inf = self._rescale_coef(self._opt_result['Rinf'],'series')
+			# self.inductance = self._rescale_coef(self._opt_result['induc'],'series')	
+		
+		# elif model_type=='MultiDist':
+			# """Placeholder"""
+			# for dist_name,dist_info in self.distributions.items():
+				# if dist_info['kernel']=='DRT':
+					# self.distribution_fits[dist_name] = {'coef':self._rescale_coef(self._opt_result['xs'],dist_info['dist_type'])}
+				# elif dist_info['kernel']=='DDT':
+					# self.distribution_fits[dist_name] = {'coef':self._rescale_coef(self._opt_result['xp'],dist_info['dist_type'])}
+			# self.R_inf = self._rescale_coef(self._opt_result['Rinf'],'series')
+			# self.inductance = self._rescale_coef(self._opt_result['induc'],'series')
+		
+		self.fit_type = 'map-drift'
+		self.sigma_min = sigma_min
+		
 	def bayes_fit(self,frequencies,Z,part='both',scale_Z=True,init_from_ridge=False,nonneg_drt=False,outliers=False,sigma_min=0.002,
 			warmup=200,sample=200,chains=2,random_seed=1234,inductance_scale=1,outlier_lambda=10,
 			fitY=False,Yscale=1,SA=False,SASY=False):
@@ -880,7 +1150,7 @@ class Inverter:
 		frequencies: array
 			Measured frequencies
 		Z: complex array
-			Measured (complex) impedance values
+			Measured (complex) impedance values. Must have same length as frequencies
 		part: str, optional (default: 'both')
 			Which part of the impedance data to fit. Options: 'both', 'real', 'imag'
 		scale_Z: bool, optional (default: True)
@@ -916,7 +1186,7 @@ class Inverter:
 		"""
 		
 		# load stan model
-		model,model_str = self._get_stan_model(nonneg_drt,outliers,fitY,SA)
+		model,model_str = self._get_stan_model(nonneg_drt,outliers,False,1,fitY,SA)
 		self.stan_model_name = model_str
 		model_type = model_str.split('_')[0]
 		if model_type=='Series-Parallel' and nonneg_drt==False:
@@ -931,6 +1201,7 @@ class Inverter:
 		dat = self._prep_stan_data(frequencies,Z_scaled,part,model_type,dist_mat,outliers,sigma_min,mode='sample',
 			inductance_scale=inductance_scale,outlier_lambda=outlier_lambda,
 			fitY=fitY,SA=SA,SASY=SASY)
+		self._stan_input = dat.copy()
 		
 		# get initial fit
 		if init_from_ridge:
@@ -985,7 +1256,7 @@ class Inverter:
 		self.fit_type = 'bayes'
 		self.sigma_min = sigma_min
 		
-	def _get_stan_model(self,nonneg_drt,outliers,fitY,SA):
+	def _get_stan_model(self,nonneg_drt,outliers,drift,num_proc,fitY,SA):
 		"""Get the appropriate Stan model for the distributions. Called by map_fit and bayes_fit methods
 		
 		Parameters:
@@ -1013,6 +1284,9 @@ class Inverter:
 		
 		if nonneg_drt and num_series>=1:
 			model_str += '_pos'
+			
+		if drift:
+			model_str += f'_drift-x{num_proc}' #'_drift_2dx'
 			
 		if fitY:
 			if num_par>=1 and num_series==0:
@@ -1626,7 +1900,7 @@ class Inverter:
 			
 		return cvxopt.solvers.qp(P,q,G,h)
 		
-	def _prep_matrices(self,frequencies,Z,part,weights,dZ,scale_Z,penalty,fit_type):
+	def _prep_matrices(self,frequencies,Z,part,weights,dZ,scale_Z,penalty,fit_type,sort_desc=True):
 		if len(frequencies)!=len(Z):
 			raise ValueError("Length of frequencies and Z must be equal")
 			
@@ -1637,9 +1911,10 @@ class Inverter:
 			frequencies = np.array(frequencies)
 			
 		# sort by descending frequency
-		sort_idx = np.argsort(frequencies)[::-1]
-		frequencies = frequencies[sort_idx]
-		Z = Z[sort_idx]
+		if sort_desc:
+			sort_idx = np.argsort(frequencies)[::-1]
+			frequencies = frequencies[sort_idx]
+			Z = Z[sort_idx]
 		
 		# check if we need to recalculate matrices due to change in self.distributions
 		# A change in self.distributions may not be caught by set_distributions because 
@@ -2059,7 +2334,7 @@ class Inverter:
 		return pred_mat
 		
 		
-	def predict_Z(self,frequencies,distributions=None,include_offsets=True,percentile=None):
+	def predict_Z(self,frequencies,times=None,distributions=None,include_offsets=True,percentile=None):
 		"""Predict impedance from recovered distributions
 		
 		Parameters:
@@ -2132,23 +2407,78 @@ class Inverter:
 			Z_pred = np.zeros(len(frequencies),dtype=complex)
 			
 			# add contributions from distributions to Z_pred
-			for name, mat in pred_mat.items():
-				dist_type = self.distributions[name]['dist_type']
-				coef = self.distribution_fits[name]['coef']
+			if self.fit_type=='map-drift':
+				if times is None:
+					raise ValueError('Data collection times must be provided for drift prediction')
+				elif len(times)!=len(frequencies):
+					raise ValueError('times must have same length as frequencies')
 				
-				if dist_type=='series':
-					Z_re = mat['A_re']@coef
-					Z_im = mat['A_im']@coef
-					Z_pred += Z_re + 1j*Z_im
-				elif dist_type=='parallel':
-					Y_re = mat['A_re']@coef
-					Y_im = mat['A_im']@coef
-					Z_pred += 1/(Y_re + 1j*Y_im)
-		
-			# add contributions from R_inf and inductance
-			if include_offsets:
-				Z_pred += self.R_inf
-				Z_pred += 1j*2*np.pi*frequencies*self.inductance
+				for name, mat in pred_mat.items():
+					dist_type = self.distributions[name]['dist_type']
+					# determine number of processes
+					model_split = self.stan_model_name.split('_')
+					drift_str = [ms for ms in model_split if ms[:5]=='drift'][0]
+					num_proc = int(drift_str[-1])
+					
+					# pull x0-x1
+					x0 = self.distribution_fits[name]['x0']
+					x1 = self.distribution_fits[name]['x1']
+					tau_x1 = self.distribution_fits[name]['tau_x1']
+					
+					# create time matrix
+					T = np.tile(times,(len(x0),1))
+					
+					# construct time-dependent X matrix
+					X0 = np.tile(x0,(len(times),1)).T
+					X1 = np.tile(x1,(len(times),1)).T
+					X = X0 + (X1-X0)*(1-np.exp(-T/tau_x1))
+					
+					# add additional processes
+					if num_proc > 1:
+						for n in range(2,num_proc+1):
+							xn = self.distribution_fits[name][f'x{n}']
+							tau_xn = self.distribution_fits[name][f'tau_x{n}']
+							Xn = np.tile(xn,(len(times),1)).T
+							X += Xn*(1-np.exp(-T/tau_xn))
+					
+					# calculate AX
+					AX_re = mat['A_re']*X.T
+					AX_im = mat['A_im']*X.T
+					
+					if dist_type=='series':
+						Z_re = np.sum(AX_re,axis=1)
+						Z_im = np.sum(AX_im,axis=1)
+						Z_pred += Z_re + 1j*Z_im
+					elif dist_type=='parallel':
+						Y_re = np.sum(AX_re,axis=1)
+						Y_im = np.sum(AX_im,axis=1)
+						Z_pred += 1/(Y_re + 1j*Y_im)
+					
+				if include_offsets:
+					# Rinf is time-dependent
+					R_inf = self.Rinf_0 + self.delta_Rinf*(1-np.exp(-times/self.tau_Rinf))
+					Z_pred += R_inf
+					# inductance is constant
+					Z_pred += 1j*2*np.pi*frequencies*self.inductance
+				
+			else:
+				for name, mat in pred_mat.items():
+					dist_type = self.distributions[name]['dist_type']
+					coef = self.distribution_fits[name]['coef']
+					
+					if dist_type=='series':
+						Z_re = mat['A_re']@coef
+						Z_im = mat['A_im']@coef
+						Z_pred += Z_re + 1j*Z_im
+					elif dist_type=='parallel':
+						Y_re = mat['A_re']@coef
+						Y_im = mat['A_im']@coef
+						Z_pred += 1/(Y_re + 1j*Y_im)
+			
+				# add contributions from R_inf and inductance
+				if include_offsets:
+					Z_pred += self.R_inf
+					Z_pred += 1j*2*np.pi*frequencies*self.inductance
 			
 		return Z_pred
 		
@@ -2261,13 +2591,13 @@ class Inverter:
 					Rp = np.real(Z_range[1] - Z_range[0])
 				else:
 					# get the distribution of Rp
-					Z_mat = self.predict_Z_distribution(np.array([1e20,1e-20]),distributions)
+					Z_mat = self.predict_Z_distribution(np.array([1e20,1e-20]),distributions=distributions)
 					Rp_sample = np.real(Z_mat[:,1] - Z_mat[:,0])
 					Rp = np.percentile(Rp_sample,percentile)
 				
 		return Rp 
 		
-	def predict_sigma(self,frequencies,percentile=None):
+	def predict_sigma(self,frequencies,percentile=None,times=None):
 		if percentile is not None and self.fit_type!='bayes':
 			raise ValueError('Percentile prediction is only available for bayes_fit')
 			
@@ -2278,7 +2608,7 @@ class Inverter:
 					sigma_tot = np.percentile(self._sample_result['sigma_tot'],percentile,axis=0)
 				else:
 					sigma_tot = np.mean(self._sample_result['sigma_tot'],axis=0)
-			elif self.fit_type=='map':
+			elif self.fit_type[:3]=='map':
 				sigma_tot = self._opt_result['sigma_tot']
 			else:
 				raise ValueError('Error scale prediction only available for bayes_fit and map_fit')
@@ -2307,7 +2637,7 @@ class Inverter:
 						sigma_out = np.mean(self._sample_result['sigma_out'],axis=0)
 					except ValueError:
 						sigma_out = np.zeros(2*len(self.f_train))
-			elif self.fit_type=='map':
+			elif self.fit_type[:3]=='map':
 				sigma_res = self._opt_result['sigma_res']
 				alpha_prop = self._opt_result['alpha_prop']
 				alpha_re = self._opt_result['alpha_re']
@@ -2325,7 +2655,7 @@ class Inverter:
 				# # legacy - for models run before _sigma_min was set by fit methods
 				# sigma_min = 0 #***placeholder
 				
-			Z_pred = self.predict_Z(frequencies,percentile)
+			Z_pred = self.predict_Z(frequencies,percentile=percentile,times=times)
 			
 			# assume none of predicted points are outliers - just get baseline sigma_out contribution
 			sigma_base = np.sqrt(sigma_res**2 + np.min(sigma_out)**2 + sigma_min**2)*self._Z_scale
@@ -2337,7 +2667,7 @@ class Inverter:
 		
 	def score(self,frequencies=None,Z=None,metric='chi_sq',weights=None,part='both'):
 		weights = self._format_weights(frequencies,Z,weights,part)
-		Z_pred = self.predict(frequencies)
+		Z_pred = self.predict_Z(frequencies)
 		if part=='both':
 			Z_pred = np.concatenate((Z_pred.real,Z_pred.imag))
 			Z = np.concatenate((Z.real,Z.imag))
@@ -2356,40 +2686,54 @@ class Inverter:
 			
 		return score	
 		
-	def predict_distribution(self,name=None,eval_tau=None,percentile=None):
+	def predict_distribution(self,name=None,eval_tau=None,percentile=None,time=None):
 		"""Get fitted distribution(s)
-		***Need to reimplement percentile***
 		"""
-		"Need to reimplement percentile"
-		# if percentile is not None:
-			# coef = self.coef_percentile(percentile)
-		# else:
-			# coef = self.coef_
-			
-		if name is not None:
-			# return the specified distribution
-			if percentile is not None:
-				coef = self.coef_percentile(name,percentile)
-			else:
-				coef = self.distribution_fits[name]['coef']
+		
+		if self.fit_type=='map-drift':
+			# evaluate the distribution at the specified time
+			if time is None:
+				raise ValueError('time must be supplied for drift fit')
 				
-			epsilon = self.distributions[name]['epsilon']
-			basis_tau = self.distributions[name]['tau']
-			if eval_tau is None:
-				eval_tau = self.distributions[name]['tau']
-			phi = get_basis_func(self.basis)
-			bases = np.array([phi(np.log(eval_tau/t_m),epsilon) for t_m in basis_tau]).T
-			F = bases@coef
+			if name is not None:
+				# pull x0-x1
+				x0 = self.distribution_fits[name]['x0']
+				x1 = self.distribution_fits[name]['x1']
+				tau_x1 = self.distribution_fits[name]['tau_x1']
+				
+				x = x0 + (x1-x0)*(1-np.exp(-time/tau_x1))
+				
+				# determine number of processes
+				model_split = self.stan_model_name.split('_')
+				drift_str = [ms for ms in model_split if ms[:5]=='drift'][0]
+				num_proc = int(drift_str[-1])
+				
+				# add additional processes
+				if num_proc > 1:
+					for n in range(2,num_proc+1):
+						xn = self.distribution_fits[name][f'x{n}']
+						tau_xn = self.distribution_fits[name][f'tau_x{n}']
+						
+						x += xn*(1-np.exp(-time/tau_xn))
+				
+				epsilon = self.distributions[name]['epsilon']
+				basis_tau = self.distributions[name]['tau']
+				if eval_tau is None:
+					eval_tau = self.distributions[name]['tau']
+				phi = get_basis_func(self.basis)
+				bases = np.array([phi(np.log(eval_tau/t_m),epsilon) for t_m in basis_tau]).T
+				F = bases@x
+				
+				return F
 			
-			return F
-		else:
-			out = {}
-			# return all distributions in a dict
-			for name in self.distributions.keys():
+		else:	
+			if name is not None:
+				# return the specified distribution
 				if percentile is not None:
 					coef = self.coef_percentile(name,percentile)
 				else:
 					coef = self.distribution_fits[name]['coef']
+					
 				epsilon = self.distributions[name]['epsilon']
 				basis_tau = self.distributions[name]['tau']
 				if eval_tau is None:
@@ -2397,9 +2741,26 @@ class Inverter:
 				phi = get_basis_func(self.basis)
 				bases = np.array([phi(np.log(eval_tau/t_m),epsilon) for t_m in basis_tau]).T
 				F = bases@coef
-				out[name] = F
-			
-			return out
+				
+				return F
+			else:
+				out = {}
+				# return all distributions in a dict
+				for name in self.distributions.keys():
+					if percentile is not None:
+						coef = self.coef_percentile(name,percentile)
+					else:
+						coef = self.distribution_fits[name]['coef']
+					epsilon = self.distributions[name]['epsilon']
+					basis_tau = self.distributions[name]['tau']
+					if eval_tau is None:
+						eval_tau = self.distributions[name]['tau']
+					phi = get_basis_func(self.basis)
+					bases = np.array([phi(np.log(eval_tau/t_m),epsilon) for t_m in basis_tau]).T
+					F = bases@coef
+					out[name] = F
+				
+				return out
 		
 	# getters and setters to control matrix recalculation
 	def get_basis_freq(self):
@@ -2479,7 +2840,7 @@ def get_basis_func(basis):
 	else:
 		raise ValueError(f'Invalid basis {basis}. Options are gaussian')
 	return phi
-	
+	 
 def get_A_func(part,basis='gaussian',kernel='DRT',dist_type='series',symmetry='planar',bc=None,ct=False,k_ct=None):
 	"""
 	Create integrand function for A matrix
