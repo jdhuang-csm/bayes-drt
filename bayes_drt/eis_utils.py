@@ -247,6 +247,14 @@ def read_eis_zdata(file):
 		#python engine required to use skipfooter
 		data = pd.read_csv(file,sep='\t',skiprows=skiprows,header=None,names=header,usecols=usecols,skipfooter=skipfooter,engine='python')
 		
+		# add timestamp
+		try:
+			dt = get_timestamp(file)
+			time_col = np.intersect1d(['Time','T'],data.columns)[0] # EIS files in Repeating jv-EIS files have column named 'Time' instead of 'T'		
+			data['timestamp'] = [dt + timedelta(seconds=t) for t in data[time_col]]
+		except Exception:
+			print(f'Reading timestamp failed for file {file}')
+		
 	elif source=='zplot':
 		#find start of zcurve data
 		zidx = txt.find('End Comments')
@@ -433,8 +441,8 @@ def read_ocv_data(file,file_type='auto'):
 		
 		#get timestamp
 		dt = get_timestamp(file)
-		#time_col = np.intersect1d(['Time','T'],data.columns) # EIS files in Repeating jv-EIS files have column named 'Time' instead of 'T'
-		data['timestamp'] = [dt + timedelta(seconds=t) for t in data['T']]
+		time_col = np.intersect1d(['Time','T'],data.columns)[0] # EIS files in Repeating jv-EIS files have column named 'Time' instead of 'T'
+		data['timestamp'] = [dt + timedelta(seconds=t) for t in data[time_col]]
 		
 		return data
 		
@@ -1252,6 +1260,39 @@ def plot_nyquist(df,area=None,ax=None,label='',plot_func='scatter',unit_scale='a
 		# make scale of x and y axes the same
 		fig = ax.get_figure()
 		
+		
+		# if data extends beyond axis limits, adjust to capture all data
+		ydata_range = df['Zimag'].max() - df['Zimag'].min()
+		xdata_range = df['Zreal'].max() - df['Zreal'].min()
+		if -df['Zimag'].min() < ax.get_ylim()[0]:
+			if -df['Zimag'].min() >= 0:
+				# if data doesn't go negative, don't let y-axis go negative
+				ymin = max(0,-df['Zimag'].min() - ydata_range*0.1)
+			else:
+				ymin = -df['Zimag'].min() - ydata_range*0.1
+		else:
+			ymin = ax.get_ylim()[0]
+		if -df['Zimag'].max() > ax.get_ylim()[1]:
+			ymax = -df['Zimag'].max() + ydata_range*0.1
+		else:
+			ymax = ax.get_ylim()[1]
+		ax.set_ylim(ymin,ymax)
+		
+		if df['Zreal'].min() < ax.get_xlim()[0]:
+			if df['Zreal'].min() >= 0:
+				# if data doesn't go negative, don't let x-axis go negative
+				xmin = max(0,df['Zreal'].min() - xdata_range*0.1)
+			else:
+				xmin = df['Zreal'].min() - xdata_range*0.1
+		else:
+			xmin = ax.get_xlim()[0]
+		if df['Zreal'].max() > ax.get_xlim()[1]:
+			xmax = df['Zreal'].max() + xdata_range*0.1
+		else:
+			xmax = ax.get_xlim()[1]
+		ax.set_xlim(xmin,xmax)
+		
+		
 		# get data range
 		yrng = ax.get_ylim()[1] - ax.get_ylim()[0]
 		xrng = ax.get_xlim()[1] - ax.get_xlim()[0]
@@ -1259,7 +1300,6 @@ def plot_nyquist(df,area=None,ax=None,label='',plot_func='scatter',unit_scale='a
 		# get axis dimensions
 		bbox = ax.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
 		width, height = bbox.width, bbox.height
-		width, height
 		
 		yscale = yrng/height
 		xscale = xrng/width
@@ -1307,8 +1347,8 @@ def plot_bode(df,area=None,axes=None,label='',plot_func='scatter',cols=['Zmod','
 	"""
 	df = df.copy()
 	# formatting for columns
-	col_dict = {'Zmod':{'units':'$\Omega$','label':'$Z_{\mathrm{mod}}$','scale':'log'},
-				'Zphz':{'units':'$^\circ$','label':'$Z_{\mathrm{phz}}$','scale':'linear'},
+	col_dict = {'Zmod':{'units':'$\Omega$','label':'$|Z|$','scale':'log'},
+				'Zphz':{'units':'$^\circ$','label':r'$\theta$','scale':'linear'},
 				'Zreal':{'units':'$\Omega$','label':'$Z^\prime$','scale':'linear'},
 				'Zimag':{'units':'$\Omega$','label':'$Z^{\prime\prime}$','scale':'linear'}
 				}
@@ -1376,11 +1416,17 @@ def plot_bode(df,area=None,axes=None,label='',plot_func='scatter',cols=['Zmod','
 	for col, ax in zip(cols,axes):
 		ax.set_ylabel(ax_title(col,area))
 		ax.set_yscale(col_dict.get(col,{}).get('scale','linear'))
+		if col_dict.get(col,{}).get('scale','linear')=='log':
+			# if y-axis is log-scaled, manually set limits
+			# sometimes matplotlib gets it wrong
+			ymin = min(ax.get_ylim()[0],df[col].min()/2)
+			ymax = min(ax.get_ylim()[1],df[col].max()*2)
+			ax.set_ylim(ymin,ymax)
 		
 	for ax in axes:
 		# manually set x axis limits - sometimes matplotlib doesn't get them right
-		fmin = df['Freq'].min()
-		fmax = df['Freq'].max()
+		fmin = min(df['Freq'].min(),ax.get_xlim()[0]*5)
+		fmax = max(df['Freq'].max(),ax.get_xlim()[1]/5)
 		ax.set_xlim(fmin/5,fmax*5)
 	
 	
