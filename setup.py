@@ -18,7 +18,7 @@ setup(name='bayes_drt',
 		'scipy',
 		'pandas',
 		'cvxopt',
-		'pystan',
+		'pystan==2.19.1.1',
 		'matplotlib'
 		],
 	include_package_data=True
