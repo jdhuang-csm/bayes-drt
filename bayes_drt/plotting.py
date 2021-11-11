@@ -5,8 +5,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 import bayes_drt.utils
-from . import file_load as gt
-from .file_load import read_ocv
+from . import file_load as fl
 from .utils import get_unit_scale
 
 
@@ -28,7 +27,7 @@ def plot_ocv(datadir, filter_func=None, files=None, ax=None, invert='auto', same
     elif filter_func and files:
         raise ValueError('Both filter_func and files have been specified. Please specify only one')
 
-    dfs = [read_ocv(os.path.join(datadir, file)) for file in files]
+    dfs = [fl.read_ocv(os.path.join(datadir, file)) for file in files]
     dfs = [df for df in dfs if len(df) > 0]
     start_times = [df['timestamp'][0] for df in dfs]
     start_time = min(start_times)
@@ -360,30 +359,61 @@ def plot_bode(df, area=None, axes=None, label='', plot_func='scatter', cols=['Zm
     return axes
 
 
-def plot_full_eis(df, area=None, axes=None, label='', plot_func='scatter', unit_scale='auto',
-                  bode_cols=['Zmod', 'Zphz'], eq_xy=True, **kw):
-    if axes is None:
-        fig, axes = plt.subplots(1, 3, figsize=(9, 2.75))
-        ax1, ax2, ax3 = axes.ravel()
+def plot_eis(df, plot_type='all', area=None, axes=None, label='', plot_func='scatter', unit_scale='auto',
+             bode_cols=['Zmod', 'Zphz'], eq_xy=True, **kw):
+    """
+    Plot eis data in Nyquist and/or Bode plot(s)
+    Parameters
+    ----------
+    df:
+    plot_type
+    area
+    axes
+    label
+    plot_func
+    unit_scale
+    bode_cols
+    eq_xy
+    kw
+
+    Returns
+    -------
+
+    """
+    if plot_type == 'bode':
+        axes = plot_bode(df, area=area, label=label, axes=axes, plot_func=plot_func, cols=bode_cols,
+                         unit_scale=unit_scale, **kw)
+    elif plot_type == 'nyquist':
+        axes = plot_nyquist(df, area=area, label=label, ax=axes, plot_func=plot_func, unit_scale=unit_scale,
+                            eq_xy=eq_xy,
+                            **kw)
+    elif plot_type == 'all':
+        if axes is None:
+            fig, axes = plt.subplots(1, 3, figsize=(9, 2.75))
+            ax1, ax2, ax3 = axes.ravel()
+        else:
+            ax1, ax2, ax3 = axes.ravel()
+            fig = axes.ravel()[0].get_figure()
+
+        # Nyquist plot
+        plot_nyquist(df, area=area, label=label, ax=ax1, plot_func=plot_func, unit_scale=unit_scale, eq_xy=eq_xy, **kw)
+
+        # Bode plots
+        plot_bode(df, area=area, label=label, axes=(ax2, ax3), plot_func=plot_func, cols=bode_cols,
+                  unit_scale=unit_scale,
+                  **kw)
+
+        fig.tight_layout()
     else:
-        ax1, ax2, ax3 = axes.ravel()
-        fig = axes.ravel()[0].get_figure()
-
-    # Nyquist plot
-    plot_nyquist(df, area=area, label=label, ax=ax1, plot_func=plot_func, unit_scale=unit_scale, eq_xy=eq_xy, **kw)
-
-    # Bode plots
-    plot_bode(df, area=area, label=label, axes=(ax2, ax3), plot_func=plot_func, cols=bode_cols, unit_scale=unit_scale,
-              **kw)
-
-    fig.tight_layout()
+        raise ValueError(f'Invalid plot_type {plot_type}. Options: all, bode, nyquist')
 
     return axes
+
 
 # ----------------------------------
 # Functions for plotting DRT results
 # ----------------------------------
-def plot_distribution(df, inv, ax, distribution='DRT', tau_plot=np.logspace(-8, 3, 200), plot_bounds=True, plot_ci=True,
+def plot_distribution(df, inv, ax, distribution=None, tau_plot=np.logspace(-8, 3, 200), plot_bounds=True, plot_ci=True,
                       label='', ci_label='', unit_scale='auto', freq_axis=True, area=None, normalize=False,
                       predict_kw={}, **kw):
     """
@@ -511,7 +541,7 @@ def plot_resid(df, inv, axes, unit_scale='auto', plot_ci=True, predict_kw={}):
     Z = df['Zreal'].values + 1j * df['Zimag'].values
     Z_pred = inv.predict_Z(freq, **predict_kw)
 
-    df_err = gt.construct_eis_df(freq, Z_pred - Z)
+    df_err = fl.construct_eis_df(freq, Z_pred - Z)
     if unit_scale == 'auto':
         err_scale = bayes_drt.utils.get_scale_factor(df_err)
         unit_scale = bayes_drt.utils.get_unit_scale(df_err)
@@ -542,7 +572,7 @@ def plot_drt_fit(df, inv, axes, plot_type='all', bode_cols=['Zreal', 'Zimag'], p
         f_pred = freq
 
     Z_pred = inv.predict_Z(f_pred, **predict_kw)
-    df_pred = gt.construct_eis_df(f_pred, Z_pred)
+    df_pred = fl.construct_eis_df(f_pred, Z_pred)
 
     data_defaults = dict(s=10, alpha=0.5)
     data_defaults.update(data_kw)
@@ -550,10 +580,10 @@ def plot_drt_fit(df, inv, axes, plot_type='all', bode_cols=['Zreal', 'Zimag'], p
     # plot Z fit
     if plot_type == 'all':
         if plot_data:
-            plot_full_eis(df, bode_cols=bode_cols, axes=axes, label=data_label, area=area, unit_scale=unit_scale,
-                          **data_defaults)
-        plot_full_eis(df_pred, axes=axes, bode_cols=bode_cols, plot_func='plot', color=color, unit_scale=unit_scale,
-                      label=label, area=area, **kw)
+            plot_eis(df, bode_cols=bode_cols, axes=axes, label=data_label, area=area, unit_scale=unit_scale,
+                     **data_defaults)
+        plot_eis(df_pred, axes=axes, bode_cols=bode_cols, plot_func='plot', color=color, unit_scale=unit_scale,
+                 label=label, area=area, **kw)
     elif plot_type == 'nyquist':
         if plot_data:
             plot_nyquist(df, ax=axes, label=data_label, area=area, unit_scale=unit_scale, **data_defaults)

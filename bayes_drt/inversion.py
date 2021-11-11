@@ -1055,7 +1055,7 @@ class Inverter:
     # ===============================================
     # Methods for fitting hierarchical Bayesian model
     # ===============================================
-    def map_fit(self, frequencies, Z, part='both', scale_Z=True, init_from_ridge=False, nonneg_drt=False,
+    def map_fit(self, frequencies, Z, part='both', scale_Z=True, init_from_ridge=False, nonneg=False,
                 outliers=False, check_outliers=True,
                 sigma_min=0.002, max_iter=50000, random_seed=1234, inductance_scale=1, outlier_lambda=10, ridge_kw={},
                 add_stan_data={}, model_str=None,
@@ -1076,7 +1076,7 @@ class Inverter:
 		init_from_ridge: bool, optional (default: False)
 			If True, use the hyperparametric ridge solution to initialize the Bayesian fit.
 			Only valid for single-distribution fits
-		nonneg_drt: bool, optional (default: False)
+		nonneg: bool, optional (default: False)
 			If True, constrain the DRT to non-negative values
 		outliers: bool or str, optional (default: False)
 			If True, use outlier-robust error model.
@@ -1124,7 +1124,7 @@ class Inverter:
             if len(self.distributions) > 1:
                 raise ValueError('Ridge initialization can only be performed for single-distribution fits')
             else:
-                init = self._get_init_from_ridge(frequencies, Z, nonneg=nonneg_drt, outliers=outliers,
+                init = self._get_init_from_ridge(frequencies, Z, nonneg=nonneg, outliers=outliers,
                                                  inductance_scale=inductance_scale, ridge_kw=ridge_kw)
                 self._init_params = init()
         else:
@@ -1150,12 +1150,12 @@ class Inverter:
 
         # load stan model
         if model_str is None:
-            model, model_str = self._get_stan_model(nonneg_drt, outliers, False, None, fitY, SA)
+            model, model_str = self._get_stan_model(nonneg, outliers, False, None, fitY, SA)
         else:
             model = load_pickle(os.path.join(script_dir, 'stan_model_files', model_str))
         self.stan_model_name = model_str
         model_type = model_str.split('_')[0]
-        if model_type == 'Series-Parallel' and nonneg_drt == False:
+        if model_type == 'Series-Parallel' and nonneg == False:
             warnings.warn('For mixed series-parallel models, it is highly recommended to set nonnneg_drt=True')
 
         # prepare data for stan model
@@ -1246,7 +1246,7 @@ class Inverter:
                         outlier_idx, frequencies[outlier_idx]))
 
     def drift_map_fit(self, frequencies, Z, times, drift_model='x1', part='both', scale_Z=True, init_from_ridge=False,
-                      nonneg_drt=False, outliers=False,
+                      nonneg=False, outliers=False,
                       model_str=None, init_values=None,
                       sigma_min=0.002, max_iter=50000, random_seed=1234, inductance_scale=1, outlier_lambda=5,
                       ridge_kw={}, add_stan_data={},
@@ -1267,7 +1267,7 @@ class Inverter:
 		init_from_ridge: bool, optional (default: False)
 			If True, use the hyperparametric ridge solution to initialize the Bayesian fit.
 			Only valid for single-distribution fits
-		nonneg_drt: bool, optional (default: False)
+		nonneg: bool, optional (default: False)
 			If True, constrain the DRT to non-negative values
 		outliers: bool, optional (default: False)
 			If True, enable outlier identification via independent error contribution variable
@@ -1291,12 +1291,12 @@ class Inverter:
 		"""
         # load stan model
         if model_str is None:
-            model, model_str = self._get_stan_model(nonneg_drt, outliers, True, drift_model, fitY, SA)
+            model, model_str = self._get_stan_model(nonneg, outliers, True, drift_model, fitY, SA)
         else:
             model = load_pickle(os.path.join(script_dir, 'stan_model_files', model_str))
         self.stan_model_name = model_str
         model_type = model_str.split('_')[0]
-        if model_type == 'Series-Parallel' and nonneg_drt == False:
+        if model_type == 'Series-Parallel' and nonneg == False:
             warnings.warn('For mixed series-parallel models, it is highly recommended to set nonnneg_drt=True')
 
         # perform scaling and weighting and get A and B matrices
@@ -1370,7 +1370,7 @@ class Inverter:
             if len(self.distributions) > 1:
                 raise ValueError('Ridge initialization can only be performed for single-distribution fits')
             else:
-                init = self._get_init_from_ridge(frequencies, Z, nonneg=nonneg_drt, outliers=outliers,
+                init = self._get_init_from_ridge(frequencies, Z, nonneg=nonneg, outliers=outliers,
                                                  inductance_scale=inductance_scale, ridge_kw=ridge_kw)
                 self._init_params = init()
                 dist_name = list(self.distributions.keys())[0]
@@ -1520,7 +1520,7 @@ class Inverter:
 
         self.fit_type = 'map-drift'
 
-    def bayes_fit(self, frequencies, Z, part='both', scale_Z=True, init_from_ridge=False, nonneg_drt=False,
+    def bayes_fit(self, frequencies, Z, part='both', scale_Z=True, init_from_ridge=False, nonneg=False,
                   outliers=False, check_outliers=True,
                   model_str=None, add_stan_data={},
                   sigma_min=0.002,
@@ -1543,7 +1543,7 @@ class Inverter:
 		init_from_ridge: bool, optional (default: False)
 			If True, use the hyperparametric ridge solution to initialize the Bayesian fit.
 			Only valid for single-distribution fits
-		nonneg_drt: bool, optional (default: False)
+		nonneg: bool, optional (default: False)
 			If True, constrain the DRT to non-negative values
 		outliers: bool or str, optional (default: False)
 			If True, use outlier-robust error model.
@@ -1588,7 +1588,7 @@ class Inverter:
             if len(self.distributions) > 1:
                 raise ValueError('Ridge initialization can only be performed for single-distribution fits')
             else:
-                init = self._get_init_from_ridge(frequencies, Z, nonneg=nonneg_drt, outliers=outliers,
+                init = self._get_init_from_ridge(frequencies, Z, nonneg=nonneg, outliers=outliers,
                                                  inductance_scale=inductance_scale, ridge_kw=ridge_kw)
                 self._init_params = init()
         else:
@@ -1613,12 +1613,12 @@ class Inverter:
 
         # load stan model
         if model_str is None:
-            model, model_str = self._get_stan_model(nonneg_drt, outliers, False, None, fitY, SA)
+            model, model_str = self._get_stan_model(nonneg, outliers, False, None, fitY, SA)
         else:
             model = load_pickle(os.path.join(script_dir, 'stan_model_files', model_str))
         self.stan_model_name = model_str
         model_type = model_str.split('_')[0]
-        if model_type == 'Series-Parallel' and nonneg_drt == False:
+        if model_type == 'Series-Parallel' and nonneg == False:
             warnings.warn('For mixed series-parallel models, it is highly recommended to set nonnneg_drt=True')
 
         # prepare data for stan model
@@ -1703,12 +1703,12 @@ class Inverter:
                     'Possible outliers were identified at indices {}, f={} Hz. Check the residuals and consider re-running with outliers=True'.format(
                         outlier_idx, frequencies[outlier_idx]))
 
-    def _get_stan_model(self, nonneg_drt, outliers, drift, drift_model, fitY, SA):
+    def _get_stan_model(self, nonneg, outliers, drift, drift_model, fitY, SA):
         """Get the appropriate Stan model for the distributions. Called by map_fit and bayes_fit methods
 
 		Parameters:
 		-----------
-		nonneg_drt: bool
+		nonneg: bool
 			If True, constrain DRT to be non-negative. If False, allow negative DRT values
 		outliers: bool
 			If True, enable outlier detection. If False, do not include outlier error contribution in error model.
@@ -1729,7 +1729,7 @@ class Inverter:
             warnings.warn('The MultiDist model will handle an arbitrary number of series and/or parallel distributions, but the computational performance and accuracy are suboptimal. \
 			Hard-coding your own model will most likely yield better results.')
 
-        if nonneg_drt and num_series >= 1:
+        if nonneg and num_series >= 1:
             model_str += '_pos'
 
         if drift:
@@ -3269,136 +3269,139 @@ class Inverter:
             if time is None:
                 raise ValueError('time must be supplied for drift fit')
 
-            if name is not None:
-                model_split = self.stan_model_name.split('_')
-                drift_str = [ms for ms in model_split if ms[:5] == 'drift'][0]
-                drift_model = '-'.join(drift_str.split('-')[1:])
+            # If distribution name not specified, use first distribution
+            if name is None:
+                name = list(self.distributions.keys())[0]
 
-                if drift_model in ('x1', 'x2'):
-                    # pull x0-x1
-                    x0 = self.distribution_fits[name]['x0']
-                    x1 = self.distribution_fits[name]['x1']
-                    tau_x1 = self.distribution_fits[name]['tau_x1']
+            model_split = self.stan_model_name.split('_')
+            drift_str = [ms for ms in model_split if ms[:5] == 'drift'][0]
+            drift_model = '-'.join(drift_str.split('-')[1:])
 
-                    x = x0 + (x1 - x0) * (1 - np.exp(-time / tau_x1))
+            if drift_model in ('x1', 'x2'):
+                # pull x0-x1
+                x0 = self.distribution_fits[name]['x0']
+                x1 = self.distribution_fits[name]['x1']
+                tau_x1 = self.distribution_fits[name]['tau_x1']
 
-                    # determine number of processes
-                    num_proc = int(drift_str[-1])
+                x = x0 + (x1 - x0) * (1 - np.exp(-time / tau_x1))
 
-                    # add additional processes
-                    if num_proc > 1:
-                        for n in range(2, num_proc + 1):
-                            xn = self.distribution_fits[name][f'x{n}']
-                            tau_xn = self.distribution_fits[name][f'tau_x{n}']
+                # determine number of processes
+                num_proc = int(drift_str[-1])
 
-                            x += xn * (1 - np.exp(-time / tau_xn))
+                # add additional processes
+                if num_proc > 1:
+                    for n in range(2, num_proc + 1):
+                        xn = self.distribution_fits[name][f'x{n}']
+                        tau_xn = self.distribution_fits[name][f'tau_x{n}']
 
-                    epsilon = self.distributions[name]['epsilon']
-                    basis_tau = self.distributions[name]['tau']
-                    if eval_tau is None:
-                        eval_tau = self.distributions[name]['tau']
-                    phi = get_basis_func(self.basis)
-                    bases = np.array([phi(np.log(eval_tau / t_m), epsilon) for t_m in basis_tau]).T
-                    F = bases @ x
+                        x += xn * (1 - np.exp(-time / tau_xn))
 
-                    return F
+                epsilon = self.distributions[name]['epsilon']
+                basis_tau = self.distributions[name]['tau']
+                if eval_tau is None:
+                    eval_tau = self.distributions[name]['tau']
+                phi = get_basis_func(self.basis)
+                bases = np.array([phi(np.log(eval_tau / t_m), epsilon) for t_m in basis_tau]).T
+                F = bases @ x
 
-                elif drift_model == 'dx':
-                    # pull x0 and dx
-                    x0 = self.distribution_fits[name]['x0']
-                    dx = self.distribution_fits[name]['dx']
-                    tau_dx = self.distribution_fits[name]['tau_dx']
+                return F
 
-                    x = x0 + dx * (1 - np.exp(-time / tau_dx))
+            elif drift_model == 'dx':
+                # pull x0 and dx
+                x0 = self.distribution_fits[name]['x0']
+                dx = self.distribution_fits[name]['dx']
+                tau_dx = self.distribution_fits[name]['tau_dx']
 
-                    epsilon = self.distributions[name]['epsilon']
-                    basis_tau = self.distributions[name]['tau']
-                    if eval_tau is None:
-                        eval_tau = self.distributions[name]['tau']
-                    phi = get_basis_func(self.basis)
-                    bases = np.array([phi(np.log(eval_tau / t_m), epsilon) for t_m in basis_tau]).T
-                    F = bases @ x
+                x = x0 + dx * (1 - np.exp(-time / tau_dx))
 
-                    return F
+                epsilon = self.distributions[name]['epsilon']
+                basis_tau = self.distributions[name]['tau']
+                if eval_tau is None:
+                    eval_tau = self.distributions[name]['tau']
+                phi = get_basis_func(self.basis)
+                bases = np.array([phi(np.log(eval_tau / t_m), epsilon) for t_m in basis_tau]).T
+                F = bases @ x
 
-                elif drift_model == 'dx-lin':
-                    # pull x0 and dx
-                    x0 = self.distribution_fits[name]['x0']
-                    dx = self.distribution_fits[name]['dx']
-                    m_Ft = self.distribution_fits[name]['m_Ft']
+                return F
 
-                    x = x0 + dx * time * m_Ft
+            elif drift_model == 'dx-lin':
+                # pull x0 and dx
+                x0 = self.distribution_fits[name]['x0']
+                dx = self.distribution_fits[name]['dx']
+                m_Ft = self.distribution_fits[name]['m_Ft']
 
-                    epsilon = self.distributions[name]['epsilon']
-                    basis_tau = self.distributions[name]['tau']
-                    if eval_tau is None:
-                        eval_tau = self.distributions[name]['tau']
-                    phi = get_basis_func(self.basis)
-                    bases = np.array([phi(np.log(eval_tau / t_m), epsilon) for t_m in basis_tau]).T
-                    F = bases @ x
+                x = x0 + dx * time * m_Ft
 
-                    return F
+                epsilon = self.distributions[name]['epsilon']
+                basis_tau = self.distributions[name]['tau']
+                if eval_tau is None:
+                    eval_tau = self.distributions[name]['tau']
+                phi = get_basis_func(self.basis)
+                bases = np.array([phi(np.log(eval_tau / t_m), epsilon) for t_m in basis_tau]).T
+                F = bases @ x
 
-                elif drift_model in ('RQ', 'RQ-lin'):
-                    # get initial DRT
-                    x0 = self.distribution_fits[name]['x0']
+                return F
 
-                    if eval_tau is None:
-                        eval_tau = self.distributions[name]['tau']
-                    epsilon = self.distributions[name]['epsilon']
-                    basis_tau = self.distributions[name]['tau']
+            elif drift_model in ('RQ', 'RQ-lin'):
+                # get initial DRT
+                x0 = self.distribution_fits[name]['x0']
 
-                    phi = get_basis_func(self.basis)
-                    bases = np.array([phi(np.log(eval_tau / t_m), epsilon) for t_m in basis_tau]).T
-                    F0 = bases @ x0
+                if eval_tau is None:
+                    eval_tau = self.distributions[name]['tau']
+                epsilon = self.distributions[name]['epsilon']
+                basis_tau = self.distributions[name]['tau']
 
-                    # get time-dependent ZARC DRT
-                    R_rq = self.distribution_fits[name]['R_rq']
-                    tau_rq = self.distribution_fits[name]['tau_rq']
-                    phi_rq = self.distribution_fits[name]['phi_rq']
-                    if drift_model == 'RQ':
-                        k_d = self.distribution_fits[name]['k_d']
-                        F_t = 1 - np.exp(-k_d * time)
-                    elif drift_model == 'RQ-lin':
-                        F_t = time * self.distribution_fits[name]['m_Ft']
-                    F_rq = (1 / (2 * np.pi)) * np.sin((1 - phi_rq) * np.pi) / (
-                            np.cosh(phi_rq * np.log(eval_tau / tau_rq)) - np.cos((1 - phi_rq) * np.pi))
+                phi = get_basis_func(self.basis)
+                bases = np.array([phi(np.log(eval_tau / t_m), epsilon) for t_m in basis_tau]).T
+                F0 = bases @ x0
 
-                    F = F0 + F_t * R_rq * F_rq
+                # get time-dependent ZARC DRT
+                R_rq = self.distribution_fits[name]['R_rq']
+                tau_rq = self.distribution_fits[name]['tau_rq']
+                phi_rq = self.distribution_fits[name]['phi_rq']
+                if drift_model == 'RQ':
+                    k_d = self.distribution_fits[name]['k_d']
+                    F_t = 1 - np.exp(-k_d * time)
+                elif drift_model == 'RQ-lin':
+                    F_t = time * self.distribution_fits[name]['m_Ft']
+                F_rq = (1 / (2 * np.pi)) * np.sin((1 - phi_rq) * np.pi) / (
+                        np.cosh(phi_rq * np.log(eval_tau / tau_rq)) - np.cos((1 - phi_rq) * np.pi))
 
-                    return F
+                F = F0 + F_t * R_rq * F_rq
 
-                elif drift_model in ('RQ-from-final', 'RQ-lin-from-final'):
-                    # get initial DRT
-                    x1 = self.distribution_fits[name]['x1']
+                return F
 
-                    if eval_tau is None:
-                        eval_tau = self.distributions[name]['tau']
-                    epsilon = self.distributions[name]['epsilon']
-                    basis_tau = self.distributions[name]['tau']
+            elif drift_model in ('RQ-from-final', 'RQ-lin-from-final'):
+                # get initial DRT
+                x1 = self.distribution_fits[name]['x1']
 
-                    phi = get_basis_func(self.basis)
-                    bases = np.array([phi(np.log(eval_tau / t_m), epsilon) for t_m in basis_tau]).T
-                    F1 = bases @ x1
+                if eval_tau is None:
+                    eval_tau = self.distributions[name]['tau']
+                epsilon = self.distributions[name]['epsilon']
+                basis_tau = self.distributions[name]['tau']
 
-                    # get time-dependent ZARC DRT
-                    R_rq = self.distribution_fits[name]['R_rq']
-                    tau_rq = self.distribution_fits[name]['tau_rq']
-                    phi_rq = self.distribution_fits[name]['phi_rq']
-                    if drift_model == 'RQ-from-final':
-                        k_d = self.distribution_fits[name]['k_d']
-                        F_t = -np.exp(-k_d * time)
-                    elif drift_model == 'RQ-lin-from-final':
-                        t_i = self.distribution_fits[name]['t_i']
-                        t_f = self.distribution_fits[name]['t_f']
-                        F_t = (time - t_f) / (t_f - t_i)
+                phi = get_basis_func(self.basis)
+                bases = np.array([phi(np.log(eval_tau / t_m), epsilon) for t_m in basis_tau]).T
+                F1 = bases @ x1
 
-                    F_rq = (1 / (2 * np.pi)) * np.sin((1 - phi_rq) * np.pi) / (
-                            np.cosh(phi_rq * np.log(eval_tau / tau_rq)) - np.cos((1 - phi_rq) * np.pi))
+                # get time-dependent ZARC DRT
+                R_rq = self.distribution_fits[name]['R_rq']
+                tau_rq = self.distribution_fits[name]['tau_rq']
+                phi_rq = self.distribution_fits[name]['phi_rq']
+                if drift_model == 'RQ-from-final':
+                    k_d = self.distribution_fits[name]['k_d']
+                    F_t = -np.exp(-k_d * time)
+                elif drift_model == 'RQ-lin-from-final':
+                    t_i = self.distribution_fits[name]['t_i']
+                    t_f = self.distribution_fits[name]['t_f']
+                    F_t = (time - t_f) / (t_f - t_i)
 
-                    F = F1 + F_t * R_rq * F_rq
+                F_rq = (1 / (2 * np.pi)) * np.sin((1 - phi_rq) * np.pi) / (
+                        np.cosh(phi_rq * np.log(eval_tau / tau_rq)) - np.cos((1 - phi_rq) * np.pi))
 
-                    return F
+                F = F1 + F_t * R_rq * F_rq
+
+                return F
 
         else:
             if name is not None:

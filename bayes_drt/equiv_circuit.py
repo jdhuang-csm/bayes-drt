@@ -252,22 +252,6 @@ def Z_var_num_RC2(w, HFR, Lstray, **RC_params):
     return Z_L(w, Lstray) + HFR + Z_rc
 
 
-def construct_eis_df(f, Z):
-    """
-	Construct dataframe from complex impedance array
-	Parameters:
-		f: frequency array
-		Z: complex impedance array
-	"""
-    df = pd.DataFrame(f, columns=['Freq'])
-    df['Zreal'] = Z.real
-    df['Zimag'] = Z.imag
-    df['Zmod'] = ((Z * Z.conjugate()) ** 0.5).real
-    df['Zphz'] = (180 / np.pi) * np.arctan(Z.imag / Z.real)
-
-    return df
-
-
 def chi_sq(y, y_fit, weights):
     """
 	Weighted sum of squared residuals

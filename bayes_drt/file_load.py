@@ -379,7 +379,7 @@ def read_lsv(file):
 
 
 # -----------------------------------------
-# Convenience functions for data extraction
+# Convenience functions for data formatting
 # -----------------------------------------
 def get_fZ(df):
     """Get frequency and Z from DataFrame"""
@@ -387,5 +387,21 @@ def get_fZ(df):
     Z = df['Zreal'].values + 1j * df['Zimag'].values
 
     return freq, Z
+
+
+def construct_eis_df(f, Z):
+    """
+	Construct dataframe from complex impedance array
+	Parameters:
+		f: frequency array
+		Z: complex impedance array
+	"""
+    df = pd.DataFrame(f, columns=['Freq'])
+    df['Zreal'] = Z.real
+    df['Zimag'] = Z.imag
+    df['Zmod'] = ((Z * Z.conjugate()) ** 0.5).real
+    df['Zphz'] = (180 / np.pi) * np.arctan(Z.imag / Z.real)
+
+    return df
 
 

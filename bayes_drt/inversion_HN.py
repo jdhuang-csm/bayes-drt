@@ -26,12 +26,9 @@ k_B = 8.617333e-5
 	# load_pickle(model) 
 
 class Inverter_HN(Inverter):
-	def map_fit(self,frequencies,Z,part='both',scale_Z=True,nonneg=True,outliers=False,
-		min_tau=None,max_tau=None,num_HN=10,ordered=True,model_str=None,add_stan_data={},
-		# initialization parameters
-		init_from_ridge=False,init_from_map=False,init_basis_freq=None,init_drt_fit=None,init_values=None,init_kw={},peakfit_kw={},
-		# optimization control
-		sigma_min=0.002,max_iter=50000,init_alpha=1e-3,random_seed=1234,inductance_scale=1,outlier_lambda=5):
+	def map_fit(self, frequencies, Z, part='both', scale_Z=True, init_from_ridge=False, nonneg=False, outliers=False,
+				check_outliers=True, sigma_min=0.002, max_iter=50000, random_seed=1234, inductance_scale=1,
+				outlier_lambda=10, ridge_kw={}, add_stan_data={}, model_str=None, fitY=False, SA=False, SASY=False):
 		"""
 		Obtain the maximum a posteriori estimate of the defined distribution(s) (and all model parameters).
 		
@@ -130,7 +127,7 @@ class Inverter_HN(Inverter):
 			iv['beta_HN'] = np.ones(num_HN)*0.8
 			iv['upsilon'] = np.ones(num_HN)*10
 		
-		if outliers:
+		if nonneg:
 			raise ValueError('Outlier model not yet implemented')
 			# initialize sigma_out near zero, everything else randomly
 			iv['sigma_out_raw'] = np.zeros(2*len(Z)) + 0.1
@@ -172,7 +169,7 @@ class Inverter_HN(Inverter):
 		for param in ['alpha_prop','alpha_re','alpha_im']:
 			self.error_fit[param] = self._opt_result[param]
 		# outlier contribution
-		if outliers:
+		if nonneg:
 			self.error_fit['sigma_out'] = self._rescale_coef(self._opt_result['sigma_out'],'series')
 		
 		self.fit_type = 'map'
@@ -353,7 +350,7 @@ class Inverter_HN(Inverter):
 			# Perform map fit
 			if hasattr(self,'inv_init')==False:
 				self.inv_init = Inverter(basis_freq=self.basis_freq)
-			self.inv_init.map_fit(frequencies,Z,**map_defaults)
+			self.inv_init.map_fit(frequencies, Z, **map_defaults)
 			
 			# coef = self.inv_init.distribution_fits[dist_name]['coef']
 			# if dist_type=='series':
@@ -878,7 +875,7 @@ class Inverter_HN(Inverter):
 		map_defaults.update(map_kw)
 		# Perform map fit
 		self.inv_init = Inverter(basis_freq=basis_freq)
-		self.inv_init.map_fit(frequencies,Z,**map_defaults)
+		self.inv_init.map_fit(frequencies, Z, **map_defaults)
 		
 		# Get initial HN parameter values from ridge fit
 		init = self._get_init_from_drt(self.inv_init.save_fit_data(which='core'),num_HN,inductance_scale,min_tau,max_tau,peakfit_kw)
