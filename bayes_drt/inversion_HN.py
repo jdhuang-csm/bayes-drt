@@ -7,7 +7,9 @@ import os
 from copy import deepcopy
 import glob
 
-from .inversion import Inverter, rel_round, get_basis_func
+from .inversion import Inverter
+from .matrices import get_basis_func
+from .utils import rel_round
 from . import peak_fit as pf
 from .stan_models import save_pickle, load_pickle
 
