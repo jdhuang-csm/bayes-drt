@@ -28,8 +28,8 @@ def is_number(s):
 
 def camel_case_split(identifier):
 	# from https://stackoverflow.com/questions/29916065/how-to-do-camelcase-split-in-python
-    matches = re.finditer('.+?(?:(?<=[a-z])(?=[A-Z0-9])|(?<=[A-Z0-9])(?=[A-Z0-9][a-z])|$)', identifier)
-    return [m.group(0) for m in matches]
+	matches = re.finditer('.+?(?:(?<=[a-z])(?=[A-Z0-9])|(?<=[A-Z0-9])(?=[A-Z0-9][a-z])|$)', identifier)
+	return [m.group(0) for m in matches]
 	
 def fit_r_squared(x,y,fit,weights=None):
 	"""
@@ -198,7 +198,7 @@ def get_file_info(file,sequence=['file_type','T','aflow','cflow']):
 	
 	return info
 
-def read_eis_zdata(file):
+def read_eis_zdata(file,warn=True):
 	"""read EIS zcurve data from Gamry .DTA file"""
 	try:
 		with open(file,'r') as f:
@@ -253,7 +253,8 @@ def read_eis_zdata(file):
 			time_col = np.intersect1d(['Time','T'],data.columns)[0] # EIS files in Repeating jv-EIS files have column named 'Time' instead of 'T'		
 			data['timestamp'] = [dt + timedelta(seconds=t) for t in data[time_col]]
 		except Exception:
-			print(f'Reading timestamp failed for file {file}')
+			if warn:
+				warnings.warn(f'Reading timestamp failed for file {file}')
 		
 	elif source=='zplot':
 		#find start of zcurve data
@@ -554,6 +555,13 @@ def get_cell_name(datadir):
 # Data processing
 #---------------------------------
 
+def get_fZ(df):
+	"""Get frequency and Z from DataFrame"""
+	freq = df['Freq'].values
+	Z = df['Zreal'].values + 1j*df['Zimag'].values
+	
+	return freq, Z 
+
 def polar_from_complex(data):
 	if type(data)==pd.core.frame.DataFrame:
 		Zmod = (data['Zreal'].values**2 + data['Zimag'].values**2)**0.5
@@ -655,7 +663,7 @@ def flag_eis_diffs(df,n=3,iqr_bound=5,cols=['Zmod','Zphz'],scaling='unity',show_
 			else:
 				diff = np.diff(df[col].values[::-1],n=n)/(np.diff(np.log(df['Freq'].values[::-1]),n=1)[n-1:])**n
 				if scaling=='unity':
-					weights = np.ones_like(diff)                      
+					weights = np.ones_like(diff)					  
 				elif scaling=='modulus':
 					weights = mod_weights[::-1][n:] #1/(df['Zmod'].values[::-1][n:]*np.exp(9.825*n))
 				elif scaling=='mixed':
@@ -802,7 +810,7 @@ def flag_eis_points(df,n=3,iqr_bound=5,cols=['Zmod','Zphz'],scaling='unity',fill
 			else:
 				diff = np.diff(df[col].values[::-1],n=n)/(np.diff(np.log(df['Freq'].values[::-1]),n=1)[n-1:])**n
 				if scaling=='unity':
-					weights = np.ones_like(diff)                      
+					weights = np.ones_like(diff)					  
 				elif scaling=='modulus':
 					weights = mod_weights[::-1][n:] #1/(df['Zmod'].values[::-1][n:]*np.exp(9.825*n))
 				elif scaling=='mixed':
@@ -1066,16 +1074,22 @@ def calc_G_act(df,property_col,aggregate,return_fit=False):
 	else:
 		return -k_B*fit[0]
 		
-def get_unit_scale(df):
+def get_unit_scale(df,area=None):
 	""" Get unit scale (mu, m, k, M, G) for EIS data"""
+	if area is None:
+		area = 1
 	unit_map = {-2:'$\mu$',-1:'m',0:'',1:'k',2:'M',3:'G'}
 	Z_max = max(df['Zreal'].max(),df['Zimag'].abs().max())
+	Z_max *= area
 	Z_ord = np.floor(np.log10(Z_max)/3)
 	unit_scale = unit_map.get(Z_ord,'')
 	return unit_scale
 	
-def get_scale_factor(df):
+def get_scale_factor(df,area=None):
+	if area is None:
+		area = 1
 	Z_max = max(df['Zreal'].max(),df['Zimag'].abs().max())
+	Z_max *= area
 	Z_ord = np.floor(np.log10(Z_max)/3)
 	return 10**(3*Z_ord)
 	
@@ -1148,7 +1162,7 @@ def plot_ocv(datadir, filter_func=None, files=None, ax=None, invert='auto', same
 	ax.set_xlabel('Time / h')
 	ax.set_ylabel('OCV / V')
 	
-def plot_jv(df,area=None,plot_pwr=False,ax=None,pwr_kw={'ls':'--'},**plt_kw):
+def plot_jv(df,area=None,plot_pwr=True,ax=None,pwr_kw={'marker':'o','mfc':'white'},marker='o',**plt_kw):
 	if ax is None:
 		fig, ax = plt.subplots()
 	else:
@@ -1159,7 +1173,7 @@ def plot_jv(df,area=None,plot_pwr=False,ax=None,pwr_kw={'ls':'--'},**plt_kw):
 		df['Im'] /= area
 		df['Pwr'] /= area
 		
-	ax.plot(1000*df['Im'].abs(),df['Vf'].abs(),**plt_kw)
+	ax.plot(1000*df['Im'].abs(),df['Vf'].abs(),marker=marker,**plt_kw)
 	if area is None:
 		ax.set_xlabel('$j$ / mA')
 	else:
@@ -1224,7 +1238,7 @@ def plot_nyquist(df,area=None,ax=None,label='',plot_func='scatter',unit_scale='a
 	# get/set unit scale
 	unit_map = {-2:'$\mu$',-1:'m',0:'',1:'k',2:'M',3:'G'}
 	if unit_scale=='auto':
-		unit_scale = get_unit_scale(df)
+		unit_scale = get_unit_scale(df,area)
 		Z_ord = [k for k,v in unit_map.items() if v==unit_scale][0]
 	elif unit_scale is None:
 		unit_scale=''
@@ -1237,10 +1251,9 @@ def plot_nyquist(df,area=None,ax=None,label='',plot_func='scatter',unit_scale='a
 	df['Zimag'] /= 10**(Z_ord*3)
 		
 	if plot_func=='scatter':
-		if 's' not in kw.keys():
-			# default point size
-			kw['s'] = 8
-		ax.scatter(df['Zreal'],-df['Zimag'],label=label,**kw)
+		scatter_defaults = {'s':10,'alpha':0.5}
+		scatter_defaults.update(kw)
+		ax.scatter(df['Zreal'],-df['Zimag'],label=label,**scatter_defaults)
 	elif plot_func=='plot':
 		ax.plot(df['Zreal'],-df['Zimag'],label=label,**kw)
 	else:
@@ -1264,16 +1277,16 @@ def plot_nyquist(df,area=None,ax=None,label='',plot_func='scatter',unit_scale='a
 		# if data extends beyond axis limits, adjust to capture all data
 		ydata_range = df['Zimag'].max() - df['Zimag'].min()
 		xdata_range = df['Zreal'].max() - df['Zreal'].min()
-		if -df['Zimag'].min() < ax.get_ylim()[0]:
-			if -df['Zimag'].min() >= 0:
+		if np.min(-df['Zimag']) < ax.get_ylim()[0]:
+			if np.min(-df['Zimag']) >= 0:
 				# if data doesn't go negative, don't let y-axis go negative
-				ymin = max(0,-df['Zimag'].min() - ydata_range*0.1)
+				ymin = max(0,np.min(-df['Zimag']) - ydata_range*0.1)
 			else:
-				ymin = -df['Zimag'].min() - ydata_range*0.1
+				ymin = np.min(-df['Zimag']) - ydata_range*0.1
 		else:
 			ymin = ax.get_ylim()[0]
-		if -df['Zimag'].max() > ax.get_ylim()[1]:
-			ymax = -df['Zimag'].max() + ydata_range*0.1
+		if np.max(-df['Zimag']) > ax.get_ylim()[1]:
+			ymax = np.max(-df['Zimag']) + ydata_range*0.1
 		else:
 			ymax = ax.get_ylim()[1]
 		ax.set_ylim(ymin,ymax)
@@ -1332,13 +1345,13 @@ def plot_nyquist(df,area=None,ax=None,label='',plot_func='scatter',unit_scale='a
 	
 	return ax
 
-def plot_bode(df,area=None,axes=None,label='',plot_func='scatter',cols=['Zmod','Zphz'],unit_scale='auto',invert_Zimag=True,**kw):
+def plot_bode(df,area=None,axes=None,label='',plot_func='scatter',cols=['Zmod','Zphz'],unit_scale='auto',invert_phase=True,invert_Zimag=True,**kw):
 	"""
 	Bode plot
 	
 	Args:
 		df: dataframe of impedance data
-		area: cell area in cm2. If None, plot raw impedance
+		area: active area in cm2. If None, plot raw impedance
 		label: series label
 		plot_func: pyplot plotting function. Options: 'scatter', 'plot'
 		cols: which columns to plot vs. frequency. Defaults to Zmod and Zphz
@@ -1352,12 +1365,15 @@ def plot_bode(df,area=None,axes=None,label='',plot_func='scatter',cols=['Zmod','
 				'Zreal':{'units':'$\Omega$','label':'$Z^\prime$','scale':'linear'},
 				'Zimag':{'units':'$\Omega$','label':'$Z^{\prime\prime}$','scale':'linear'}
 				}
+				
+	if type(axes) not in [list,np.ndarray,tuple] and axes is not None:
+		axes = [axes]
 	
 	if axes is None:
-		fig, axes = plt.subplots(1,2,figsize=(8,3))
+		fig, axes = plt.subplots(1,len(cols),figsize=(3*len(cols),2.75))
 	else:
 		fig = axes[0].get_figure()
-	ax1,ax2 = axes
+	# ax1,ax2 = axes
 	
 	if area is not None:
 		for col in ['Zreal','Zimag','Zmod']:
@@ -1367,7 +1383,7 @@ def plot_bode(df,area=None,axes=None,label='',plot_func='scatter',cols=['Zmod','
 	# get/set unit scale	
 	unit_map = {-2:'$\mu$',-1:'m',0:'',1:'k',2:'M',3:'G'}
 	if unit_scale=='auto':
-		unit_scale = get_unit_scale(df)
+		unit_scale = get_unit_scale(df,area)
 		Z_ord = [k for k,v in unit_map.items() if v==unit_scale][0]
 	elif unit_scale is None:
 		unit_scale=''
@@ -1382,17 +1398,19 @@ def plot_bode(df,area=None,axes=None,label='',plot_func='scatter',cols=['Zmod','
 	
 	if invert_Zimag:
 		df['Zimag'] *= -1
+		
+	if invert_phase:
+		df['Zphz'] *= -1
 	
 	
 	if plot_func=='scatter':
-		if 's' not in kw.keys():
-			# default point size
-			kw['s'] = 8
-		ax1.scatter(df['Freq'],df[cols[0]],label=label,**kw)
-		ax2.scatter(df['Freq'],df[cols[1]],label=label,**kw)
+		scatter_defaults = {'s':10,'alpha':0.5}
+		scatter_defaults.update(kw) 
+		for col,ax in zip(cols,axes):
+			ax.scatter(df['Freq'],df[col],label=label,**scatter_defaults)
 	elif plot_func=='plot':
-		ax1.plot(df['Freq'],df[cols[0]],label=label,**kw)
-		ax2.plot(df['Freq'],df[cols[1]],label=label,**kw)
+		for col,ax in zip(cols,axes):
+			ax.plot(df['Freq'],df[col],label=label,**kw)
 	else:
 		raise ValueError(f'Invalid plot type {plot_func}. Options are scatter, plot')
 	
@@ -1420,7 +1438,7 @@ def plot_bode(df,area=None,axes=None,label='',plot_func='scatter',cols=['Zmod','
 			# if y-axis is log-scaled, manually set limits
 			# sometimes matplotlib gets it wrong
 			ymin = min(ax.get_ylim()[0],df[col].min()/2)
-			ymax = min(ax.get_ylim()[1],df[col].max()*2)
+			ymax = max(ax.get_ylim()[1],df[col].max()*2)
 			ax.set_ylim(ymin,ymax)
 		
 	for ax in axes:
@@ -1449,7 +1467,7 @@ def plot_full_eis(df,area=None,axes=None,label='',plot_func='scatter',unit_scale
 		# ax2 = plt.subplot2grid((2,2),(1,0))
 		# ax3 = plt.subplot2grid((2,2),(1,1))
 		# axes = np.array([ax1,ax2,ax3])
-		fig,axes = plt.subplots(1,3,figsize=(9,2.5))
+		fig,axes = plt.subplots(1,3,figsize=(9,2.75))
 		ax1,ax2,ax3 = axes.ravel()
 	else:
 		ax1,ax2,ax3 = axes.ravel()
@@ -1600,7 +1618,7 @@ def plot_fit(data,params,model,f_model=None,axes=None,unit_scale='auto',area=Non
 	w = data['Freq'].values
 	if f_model is None:
 		f_model = w
-	elif f_model is 'fill':
+	elif f_model=='fill':
 		f_model = np.logspace(np.log10(np.min(w)),np.log10(np.max(w)), 100)
 	y = data.loc[:,['Zreal','Zimag']].values
 	weights = 1/(data['Zmod']).values
@@ -1624,7 +1642,7 @@ def plot_fit(data,params,model,f_model=None,axes=None,unit_scale='auto',area=Non
 	fit_df['Zphz'] = (180/np.pi)*np.arctan(Z_fit.imag/Z_fit.real)
 	
 	if unit_scale=='auto':
-		unit_scale = get_unit_scale(data)
+		unit_scale = get_unit_scale(data,area)
 	
 	#Nyquist plot
 	#ax.scatter(data['Zreal'],-data['Zimag'],s=6,label='Measured')
@@ -1958,20 +1976,20 @@ def Z_var_num_RC_RL(w,HFR,Lstray,R_L,**RC_params):
 	return Z_par(R_L,Z_L(w,Lstray)) + HFR + np.sum(Z_RC,axis=0)
 	
 def Z_var_num_RC_noL(w,HFR,**RC_params):
-    """
-    Impedance of circuit with 1-n parallel RC circuits in series with a resistor (HFR) only
-    Args:
-        w: frequency (Hz)
-        HFR: high-frequency resistance
-        Lstray: inductance
-        RC_params: parameters for each parallel RC circuit. keys: R, Q, n
-    """
-    #Z_RC = [Z_par(Z_cpe(w,p['Q'],p['n']), p['R']) for p in RC_params]
-    num_RC = int(len(RC_params)/3)
+	"""
+	Impedance of circuit with 1-n parallel RC circuits in series with a resistor (HFR) only
+	Args:
+		w: frequency (Hz)
+		HFR: high-frequency resistance
+		Lstray: inductance
+		RC_params: parameters for each parallel RC circuit. keys: R, Q, n
+	"""
+	#Z_RC = [Z_par(Z_cpe(w,p['Q'],p['n']), p['R']) for p in RC_params]
+	num_RC = int(len(RC_params)/3)
 
-    Z_RC = [Z_par(Z_cpe(w,RC_params[f'Q{i}'],RC_params[f'n{i}']), RC_params[f'R{i}']) for i in range(num_RC)]
+	Z_RC = [Z_par(Z_cpe(w,RC_params[f'Q{i}'],RC_params[f'n{i}']), RC_params[f'R{i}']) for i in range(num_RC)]
 
-    return HFR + np.sum(Z_RC,axis=0)
+	return HFR + np.sum(Z_RC,axis=0)
 	
 	
 def Z_var_num_RC_RL_LRC(w,HFR,Lstray,R_L,R_lrc,L_lrc,C_lrc,**RC_params):
@@ -2244,7 +2262,7 @@ def fit_ec_model(data,model,init_params=None,normalize='deg',alpha=0,n_restarts=
 		n_vals = np.array([v for k,v in params.items() if k[0]=='n'])# or k=='nu' or k=='beta')])
 		n_penalty = sum(n_vals[n_vals > 1])*1e3*cs
 		
-		return  cs + n_penalty
+		return	cs + n_penalty
 		
 	#estimate HFR if specified
 	if est_HFR==True:
@@ -2478,7 +2496,7 @@ def fit_var_RC(data,alpha,max_fun,model=Z_var_num_RC,init_params=None,max_L=1e-5
 		method: optimization method. Options:
 			''simplex'': Nelder-Mead simplex method. Can be run from multiple starting points in parameter space in order to increase likelihood of finding global min
 			''global'': Use a global optimization method. Recommended method
-			''grid_search'': Use a grid search  to explore parameter space, then use several of the best parameter sets as starting points for local Nelder-mead optimization. Not recommmended
+			''grid_search'': Use a grid search	to explore parameter space, then use several of the best parameter sets as starting points for local Nelder-mead optimization. Not recommmended
 		direction: direction for circuit element addition/subtraction
 			'ascending': start at min_num_RC and add elements up to max_num_RC. Best for methods 'simplex', 'curve_fit'
 			'descending': start at max_num_RC + 1 and remove elements down to min_num_RC. May be useful for method 'global'
@@ -3395,7 +3413,7 @@ def plot_var_RC_fit_path(data,history,model=Z_var_num_RC,weighting='modulus',wei
 	# set w_model
 	if w_model is None:
 		w_model = np.logspace(-2,6,100)
-	elif w_model is 'fill':
+	elif w_model=='fill':
 		w_model = np.logspace(np.log10(np.min(data['Freq'])),np.log10(np.max(data['Freq'])), 100)
 		
 	# set weights
