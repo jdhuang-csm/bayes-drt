@@ -1,0 +1,97 @@
+functions {
+	real HN_x(real omega, real tau0, real beta) {
+		// Intermediate "x" variable
+		return 1+ pow(omega*tau0,beta)*cos(beta*pi()/2);
+	}
+	real HN_y(real omega, real tau0, real beta){
+		// Intermediate "y" variable
+		return pow(omega*tau0,beta)*sin(beta*pi()/2);
+	}
+	real Zmod_HN(real alpha, real x, real y) {
+		return pow(sqrt(square(x) + square(y)),-alpha);
+	}
+	real theta_HN(real alpha, real x, real y) {
+		return -alpha*atan2(y,x);
+	}
+}
+data {
+	int<lower=0> N; // 2*number of measured frequencies
+	int<lower=0> K; // number of HN basis functions
+	vector[N] Z; // stacked impedance vector ([Z' Z'']^T)
+	vector[N/2] freq; //measured frequencies
+	vector[K] lntau_basis;
+	real<lower=0> lntau_box_width;
+	real<lower=0> sigma_min; // noise level floor
+	real<lower=0> induc_scale; // inductance scale
+	real<lower=0> ups_alpha;
+	real<lower=0> ups_beta;
+}
+transformed data {
+	vector [N/2] omega = freq*2*pi();
+}
+parameters {
+	real<lower=0> Rinf_raw;
+	real<lower=0> induc_raw;
+	// HN parameters
+	vector<lower=0>[K] R_HN;
+	vector<lower=0>[K] upsilon;
+	vector<lower=-lntau_box_width/2,upper=lntau_box_width/2>[K] lntau_shift;
+	vector<lower=0,upper=1>[K] alpha_HN;
+	vector<lower=0,upper=1>[K] beta_HN;
+	
+	real<lower=0> sigma_res_raw;
+	real<lower=0> alpha_prop_raw;
+	real<lower=0> alpha_re_raw;
+	real<lower=0> alpha_im_raw;
+	
+}
+transformed parameters {
+	real<lower=0> Rinf = Rinf_raw*100;
+	real<lower=0> induc = induc_raw*induc_scale;
+	
+	vector[K] lntau_HN = lntau_basis + lntau_shift;
+	
+	real<lower=0> sigma_res = sigma_res_raw*0.05;
+	real<lower=0> alpha_prop = alpha_prop_raw*0.05;
+	real<lower=0> alpha_re = alpha_re_raw*0.05;
+	real<lower=0> alpha_im = alpha_im_raw*0.05;
+	vector[N] Z_hat;
+	vector[N/2] Z_hat_re = rep_vector(0,N/2);
+	vector[N/2] Z_hat_im = rep_vector(0,N/2);
+	vector<lower=0>[N] sigma_tot; 
+	
+	// calculate Z_hat
+	for (k in 1:K){
+		real tau_HN = exp(lntau_HN[k]);
+		for (n in 1:N/2){
+			real x = HN_x(omega[n],tau_HN,beta_HN[k]);
+			real y = HN_y(omega[n],tau_HN,beta_HN[k]);
+			real Zmod = Zmod_HN(alpha_HN[k],x,y);
+			real theta = theta_HN(alpha_HN[k],x,y);
+			Z_hat_re[n] += R_HN[k]*Zmod*cos(theta);
+			Z_hat_im[n] += R_HN[k]*Zmod*sin(theta);
+		}
+	}
+	
+	Z_hat_re += Rinf;
+	Z_hat_im += induc*omega;
+	Z_hat = append_row(Z_hat_re,Z_hat_im);
+	
+	// calculate error scale
+	sigma_tot = sqrt(square(sigma_min) + square(sigma_res) + square(alpha_prop*Z_hat)
+									+ square(alpha_re*append_row(Z_hat_re,Z_hat_re)) 
+									+ square(alpha_im*append_row(Z_hat_im,Z_hat_im))
+									);
+}
+model {
+	upsilon ~ gamma(ups_alpha,ups_beta);
+	R_HN ~ exponential(upsilon);
+	Rinf_raw ~ std_normal();
+	induc_raw ~ std_normal();
+	
+	Z ~ normal(Z_hat,sigma_tot);
+	sigma_res_raw ~ std_normal();
+	alpha_prop_raw ~ std_normal();
+	alpha_re_raw ~ std_normal();
+	alpha_im_raw ~ std_normal();
+}

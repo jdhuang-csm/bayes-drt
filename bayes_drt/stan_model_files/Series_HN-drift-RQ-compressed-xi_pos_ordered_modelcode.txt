@@ -1,0 +1,177 @@
+// HN drift model
+// RQ: use drifting ZARC to model drift
+// lin: use linear approximation of time dependence
+// xi: optimize initial parameters directly
+functions {
+	// for impedance calculation
+	real HN_x(real omega, real tau0, real beta) {
+		// Intermediate "x" variable
+		return 1+ pow(omega*tau0,beta)*cos(beta*pi()/2);
+	}
+	real HN_y(real omega, real tau0, real beta){
+		// Intermediate "y" variable
+		return pow(omega*tau0,beta)*sin(beta*pi()/2);
+	}
+	real Zmod_HN(real alpha, real x, real y) {
+		return pow(sqrt(square(x) + square(y)),-alpha);
+	}
+	real theta_HN(real alpha, real x, real y) {
+		return -alpha*atan2(y,x);
+	}
+}
+data {
+	// dimensions
+	int<lower=0> N; // number of measured frequencies
+	int<lower=0> K; // number of HN basis functions
+	
+	// impedance data
+	vector[N] freq; // measured frequencies
+	vector[N] times;
+	vector[2*N] Z; // stacked impedance vector ([Z' Z'']^T)
+	vector<lower=0>[N] rel_Z_scale;
+
+	// fixed hyperparameters
+	real<lower=0> R_i_scale_alpha;
+	real<lower=0> R_i_scale_beta;
+	real<lower=0> sigma_min; // noise level floor
+	real<lower=0> induc_scale; // inductance scale
+	
+	// drift inputs;
+	real min_tau_rq;
+	real max_tau_rq;
+	real min_k;
+	real max_k;
+	real<lower=0> sigma_R_rq_scale;
+	real<lower=0> sigma_delta_Rinf_scale;
+	
+}
+transformed data {
+	vector [N] omega = freq*2*pi();
+	vector[2*N] rel_Z_scale_stack = append_row(rel_Z_scale,rel_Z_scale);
+	real min_log_tau_rq = log(min_tau_rq);
+	real max_log_tau_rq = log(max_tau_rq);
+	real min_ln_k = log(min_k);
+	real max_ln_k = log(max_k);
+	real t_i = times[1];
+	real t_f = times[N];
+}
+parameters {
+	// impedance offsets
+	real<lower=0> Rinf_i_raw;
+	real<lower=0> Rinf_f_raw;
+	real<lower=0> delta_Rinf_scale_raw;
+	real<lower=0> induc_raw;
+	
+	// HN parameters
+	vector<lower=0>[K] R_i;
+	vector<lower=0>[K] R_i_scale;
+	ordered[K] lntau_i;
+	vector<lower=0,upper=1>[K] alpha_HN;
+	vector<lower=0,upper=1>[K] beta_HN;
+	
+	// drift parameters
+	real<lower=min_ln_k,upper=max_ln_k> ln_k; // drift rate constant
+	real R_rq; // change in polarization resistance
+	real<lower=0> R_rq_scale_raw;
+	real<lower=0,upper=1> phi_rq; // phi parameter for time-dependent ZARC (RQ) element
+	real<lower=min_log_tau_rq,upper=max_log_tau_rq> log_tau_rq; // log time constant for time-dependent ZARC
+	
+	// error structure parameters
+	real<lower=0> sigma_res_raw;
+	real<lower=0> alpha_prop_raw;
+	real<lower=0> alpha_re_raw;
+	real<lower=0> alpha_im_raw;
+	
+}
+transformed parameters {
+	// impedance offsets
+	real<lower=0> Rinf_i = Rinf_i_raw*100; // R_inf has effective scale of 100
+	real<lower=0> Rinf_f = Rinf_f_raw*100;
+	real<lower=0> delta_Rinf_scale = delta_Rinf_scale_raw*sigma_delta_Rinf_scale;
+	real delta_Rinf_raw = (Rinf_f - Rinf_i) / (Rinf_i*delta_Rinf_scale);
+	real<lower=0> induc = induc_raw*induc_scale; // induc has effective scale of induc_scale
+	
+	// drift parameters
+	real<lower=0> R_rq_scale = R_rq_scale_raw*sigma_R_rq_scale;
+	real R_rq_raw = R_rq / R_rq_scale;
+	real<lower=0> tau_rq = exp(log_tau_rq);
+	//vector[N] Ft = 1 - exp(-exp(ln_k)*times); // ZARC magnitude as function of time
+	real<lower=0> k_d = exp(ln_k);
+	vector[N] Ft = (exp(-k_d*t_i) - exp(-k_d*times)) ./ (exp(-k_d*t_i) - exp(-k_d*t_f)); // ZARC magnitude as function of time
+	vector[N] Z_rq_deno;
+	vector[N] Z_rq_re;
+	vector[N] Z_rq_im;
+	
+	
+	// error structure parameters
+	real<lower=0> sigma_res = sigma_res_raw*0.05;
+	real<lower=0> alpha_prop = alpha_prop_raw*0.05;
+	real<lower=0> alpha_re = alpha_re_raw*0.05;
+	real<lower=0> alpha_im = alpha_im_raw*0.05;
+	vector[2*N] sigma_tot; 
+	
+	// parameters for Z_hat calculation
+	vector[2*N] Z_hat;
+	vector[N] Z_hat_re = rep_vector(0,N);
+	vector[N] Z_hat_im = rep_vector(0,N);
+	
+	// calculate static Z_hat
+	for (k in 1:K) {
+		real tau_i = exp(lntau_i[k]);
+		for (n in 1:N){
+			real x = HN_x(omega[n],tau_i,beta_HN[k]);
+			real y = HN_y(omega[n],tau_i,beta_HN[k]);
+			real Zmod = Zmod_HN(alpha_HN[k],x,y);
+			real theta = theta_HN(alpha_HN[k],x,y);
+			Z_hat_re[n] += R_i[k]*Zmod*cos(theta);
+			Z_hat_im[n] += R_i[k]*Zmod*sin(theta);
+		}
+	}
+	
+	// calculate time-dependent Z_rq contribution
+	for (n in 1:N){
+		Z_rq_deno[n] = square(1+ pow(omega[n]*tau_rq,phi_rq)*cos(phi_rq*pi()/2)) + square(pow(omega[n]*tau_rq,phi_rq)*sin(phi_rq*pi()/2));
+		Z_rq_re[n] = (1 + pow(omega[n]*tau_rq,phi_rq)*cos(phi_rq*pi()/2))/Z_rq_deno[n];
+		Z_rq_im[n] = -(pow(omega[n]*tau_rq,phi_rq)*sin(phi_rq*pi()/2))/Z_rq_deno[n];
+		}
+	Z_rq_re *= R_rq;
+	Z_rq_im *= R_rq;
+	
+	// add Z_rq to Z_hat
+	Z_hat_re += Z_rq_re .* Ft;
+	Z_hat_im += Z_rq_im .* Ft;
+	
+	// add time-dependent Rinf contribution
+	Z_hat_re += Rinf_i + (Rinf_f - Rinf_i)*Ft;
+	// add inductance
+	Z_hat_im += induc*omega;
+	// concatenate re and im parts
+	Z_hat = append_row(Z_hat_re,Z_hat_im);
+	
+	// calculate error scale
+	sigma_tot = sqrt(square(sigma_min*rel_Z_scale_stack) + square(sigma_res*rel_Z_scale_stack) + square(alpha_prop*Z_hat)
+									+ square(alpha_re*append_row(Z_hat_re,Z_hat_re)) 
+									+ square(alpha_im*append_row(Z_hat_im,Z_hat_im))
+									);
+}
+model {
+	// impedance offsets
+	Rinf_i_raw ~ std_normal();
+	delta_Rinf_scale_raw ~ std_normal();//inv_gamma(deltaR_scale_alpha,deltaR_scale_beta);
+	delta_Rinf_raw ~ std_normal();
+	induc_raw ~ std_normal();
+	
+	// HN parameters
+	R_i_scale ~ inv_gamma(R_i_scale_alpha,R_i_scale_beta);
+	R_i ~ normal(0,R_i_scale);
+	
+	// drift parameters
+	R_rq_scale_raw ~ std_normal();
+	R_rq_raw ~ std_normal();
+	
+	Z ~ normal(Z_hat,sigma_tot);
+	sigma_res_raw ~ std_normal();
+	alpha_prop_raw ~ std_normal();
+	alpha_re_raw ~ std_normal();
+	alpha_im_raw ~ std_normal();
+}

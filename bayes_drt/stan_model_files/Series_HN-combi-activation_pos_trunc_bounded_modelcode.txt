@@ -1,0 +1,250 @@
+functions {
+	// for impedance calculation
+	real HN_x(real omega, real tau0, real beta) {
+		// Intermediate "x" variable
+		return 1+ pow(omega*tau0,beta)*cos(beta*pi()/2);
+	}
+	real HN_y(real omega, real tau0, real beta){
+		// Intermediate "y" variable
+		return pow(omega*tau0,beta)*sin(beta*pi()/2);
+	}
+	real Zmod_HN(real alpha, real x, real y) {
+		return pow(sqrt(square(x) + square(y)),-alpha);
+	}
+	real theta_HN(real alpha, real x, real y) {
+		return -alpha*atan2(y,x);
+	}
+	// for matrix formatting
+	vector upper_triangle_to_vec(matrix m, int K) {
+		// Get upper triangle of matrix and flatten
+		// matrix m should be [K,K]
+		vector[K*(K-1)/2] x;
+		int pos = 1;
+		for (i in 1:K) {
+			for (j in i+1:K) {
+				x[pos] = m[i,j];
+				pos += 1;
+			}
+		}
+		return x;
+	}
+	// Boltzmann constant (eV/K)
+	real k_B() {return 8.617333e-5;}
+}
+data {
+	int<lower=0> J; // number of contacts
+	int<lower=0> N; // number of measured frequencies
+	int<lower=0> K; // number of HN basis functions
+	vector[J] x_coord;
+	vector[J] y_coord;
+	matrix[J,N] freq; //measured frequencies
+	matrix[J,2*N] Z; // stacked impedance vector ([Z' Z'']^T)
+	matrix[J,N] temp; // measurement temperatures (K)
+	vector<lower=0>[N] rel_Z_scale;
+	real<lower=0> T_base; // base temperature (K)
+	real<lower=0> sigma_min; // noise level floor
+	real<lower=0> induc_scale; // inductance scale
+	real<lower=0> max_delta_G; // upper bound on activation energy
+	real<lower=0> ups_alpha;
+	real<lower=0> ups_beta;
+	real<lower=0> sigma_lntau_scale;
+	real<lower=0> sigma_lnR_scale;
+	real<lower=0> sigma_alpha_scale;
+	real<lower=0> sigma_beta_scale;
+	real<lower=0> sigma_deltaG_scale;
+	real<lower=0> sigma_lnphi_scale;
+	real<lower=0> ln_phi_scale;
+	// for distance_vec truncation
+	int<lower=0> M; // number of pairwise comparisons to keep
+	int compare_idx[M]; // indexes of distance_vec to keep for parameter comparison
+}
+transformed data {
+	matrix [J,N] omega = freq*2*pi();
+	matrix[J,J] dx_mat = rep_matrix(x_coord,J) - rep_matrix(x_coord,J)';
+	matrix[J,J] dy_mat = rep_matrix(y_coord,J) - rep_matrix(y_coord,J)';
+	matrix[J,J] D = sqrt(square(dx_mat) + square(dy_mat));
+	vector[J*(J-1)/2] distance_vec_full = upper_triangle_to_vec(D,J);
+	vector[M] distance_vec = distance_vec_full[compare_idx];
+	vector[2*N] rel_Z_scale_stack = append_row(rel_Z_scale,rel_Z_scale);
+}
+parameters {
+	// offsets
+	vector<lower=0>[J] Rinf_base_raw;
+	vector<lower=0>[J] induc_raw;
+	
+	// L1 regularization strength
+	vector<lower=0>[K] upsilon;
+	
+	// HN parameters
+	matrix<lower=0>[J,K] R_HN_base;
+	ordered[K] lntau_HN_base[J];
+	matrix<lower=0,upper=1>[J,K] alpha_HN;
+	matrix<lower=0,upper=1>[J,K] beta_HN;
+	
+	// Arrhenius parameters
+	vector<lower=0,upper=max_delta_G>[J] delta_G_Rinf; // activation energy for Rinf
+	matrix<lower=0,upper=max_delta_G>[J,K] delta_G; // activation energy for R_HN
+	matrix[J,K] ln_phi_tau_raw; // ln of activation energy factor for tau
+	
+	// parameter std deviations
+	vector<lower=0>[K] sigma_lntau_raw;
+	vector<lower=0>[K] sigma_lnR_raw;
+	vector<lower=0>[K] sigma_alpha_raw;
+	vector<lower=0>[K] sigma_beta_raw;
+	vector<lower=0>[K] sigma_deltaG_raw;
+	vector<lower=0>[K] sigma_lnphi_raw;
+	
+	// error structure parameters
+	real<lower=0> sigma_res_raw;
+	real<lower=0> alpha_prop_raw;
+	real<lower=0> alpha_re_raw;
+	real<lower=0> alpha_im_raw;
+}
+transformed parameters {
+	// offsets
+	vector<lower=0>[J] Rinf_base = Rinf_base_raw*100;
+	vector<lower=0>[J] induc = induc_raw*induc_scale;
+	
+	// scale ln_phi_tau
+	matrix[J,K] ln_phi_tau = ln_phi_tau_raw*ln_phi_scale;
+	
+	// parameter std deviations
+	vector<lower=0>[K] sigma_lntau = sigma_lntau_raw*sigma_lntau_scale;
+	vector<lower=0>[K] sigma_lnR = sigma_lnR_raw*sigma_lnR_scale;
+	vector<lower=0>[K] sigma_alpha = sigma_alpha_raw*sigma_alpha_scale;
+	vector<lower=0>[K] sigma_beta = sigma_beta_raw*sigma_beta_scale;
+	vector<lower=0>[K] sigma_deltaG = sigma_deltaG_raw*sigma_deltaG_scale;
+	vector<lower=0>[K] sigma_lnphi = sigma_lnphi_raw*sigma_lnphi_scale;
+	
+	// error structure parameters
+	real<lower=0> sigma_res = sigma_res_raw*0.05;
+	real<lower=0> alpha_prop = alpha_prop_raw*0.01;
+	real<lower=0> alpha_re = alpha_re_raw*0.01;
+	real<lower=0> alpha_im = alpha_im_raw*0.01;
+	
+	// parameter difference arrays
+	vector[M] diff_lntau[K];
+	vector[M] diff_lnR[K];
+	vector[M] diff_alpha[K];
+	vector[M] diff_beta[K];
+	vector[M] diff_deltaG[K];
+	vector[M] diff_lnphi[K];
+	
+	// calculated impedance
+	vector[2*N] Z_hat[J];
+	vector[N] Z_hat_re[J];
+	vector[N] Z_hat_im[J];
+	vector<lower=0>[2*N] sigma_tot[J]; 
+	
+	// calculate Z_hat
+	for (j in 1:J){
+		Z_hat_re[j] = rep_vector(0,N);
+		Z_hat_im[j] = rep_vector(0,N);
+		for (k in 1:K){
+			
+			
+			for (n in 1:N){
+				// calculate R and tau at temp
+				real phi_tau = exp(ln_phi_tau[j,k]);
+				real tau_HN = exp(lntau_HN_base[j,k] + (delta_G[j,k]*phi_tau/k_B())*(1/temp[j,n] - 1/T_base));
+				real R_HN = R_HN_base[j,k]*exp((delta_G[j,k]/k_B())*(1/temp[j,n] - 1/T_base));
+				// temp-dependent R and tau feed into Z_hat calcs
+				real x = HN_x(omega[j,n],tau_HN,beta_HN[j,k]);
+				real y = HN_y(omega[j,n],tau_HN,beta_HN[j,k]);
+				real Zmod = Zmod_HN(alpha_HN[j,k],x,y);
+				real theta = theta_HN(alpha_HN[j,k],x,y);
+				Z_hat_re[j,n] += R_HN*Zmod*cos(theta);
+				Z_hat_im[j,n] += R_HN*Zmod*sin(theta);
+			}
+		}
+		
+		Z_hat_re[j] += (Rinf_base[j]*exp((delta_G_Rinf[j]/k_B())*(1 ./temp[j] - 1/T_base)))';
+		Z_hat_im[j] += induc[j]*omega[j]';
+		Z_hat[j] = append_row(Z_hat_re[j],Z_hat_im[j]);
+	}
+	
+	// calculate parameter differences
+	for (k in 1:K) {
+		vector[J] lntau_k = to_vector(lntau_HN_base[ ,k]);
+		vector[J] lnR_k = log(R_HN_base[ ,k]);
+		vector[J] alpha_k = alpha_HN[ ,k];
+		vector[J] beta_k = beta_HN[ ,k];
+		vector[J] deltaG_k = delta_G[ ,k];
+		vector[J] lnphi_k = ln_phi_tau[ ,k];
+		
+		matrix[J,J] dlntau_k = rep_matrix(lntau_k,J) - rep_matrix(lntau_k,J)';
+		matrix[J,J] dlnR_k = rep_matrix(lnR_k,J) - rep_matrix(lnR_k,J)';
+		matrix[J,J] dalpha_k = rep_matrix(alpha_k,J) - rep_matrix(alpha_k,J)';
+		matrix[J,J] dbeta_k = rep_matrix(beta_k,J) - rep_matrix(beta_k,J)';
+		matrix[J,J] ddeltaG_k = rep_matrix(deltaG_k,J) - rep_matrix(deltaG_k,J)';
+		matrix[J,J] dlnphi_k = rep_matrix(lnphi_k,J) - rep_matrix(lnphi_k,J)';
+		
+		vector[J*(J-1)/2] diff_lntau_full = upper_triangle_to_vec(dlntau_k,J);
+		vector[J*(J-1)/2] diff_lnR_full = upper_triangle_to_vec(dlnR_k,J);
+		vector[J*(J-1)/2] diff_alpha_full = upper_triangle_to_vec(dalpha_k,J);
+		vector[J*(J-1)/2] diff_beta_full = upper_triangle_to_vec(dbeta_k,J);
+		vector[J*(J-1)/2] diff_deltaG_full = upper_triangle_to_vec(ddeltaG_k,J);
+		vector[J*(J-1)/2] diff_lnphi_full = upper_triangle_to_vec(dlnphi_k,J);
+		
+		diff_lntau[k] = diff_lntau_full[compare_idx] ./ (distance_vec*sigma_lntau[k]);
+		diff_lnR[k] = diff_lnR_full[compare_idx] ./ (distance_vec*sigma_lnR[k]);
+		diff_alpha[k] = diff_alpha_full[compare_idx] ./ (distance_vec*sigma_alpha[k]);
+		diff_beta[k] = diff_beta_full[compare_idx] ./ (distance_vec*sigma_beta[k]);
+		diff_deltaG[k] = diff_deltaG_full[compare_idx] ./ (distance_vec*sigma_deltaG[k]);
+		diff_lnphi[k] = diff_lnphi_full[compare_idx] ./ (distance_vec*sigma_lnphi[k]);
+	}
+	
+	// calculate error scale
+	for (j in 1:J) {
+		sigma_tot[j] = sqrt(square(sigma_min*rel_Z_scale_stack) + square(sigma_res*rel_Z_scale_stack) + square(alpha_prop*Z_hat[j])
+									+ square(alpha_re*append_row(Z_hat_re[j],Z_hat_re[j])) 
+									+ square(alpha_im*append_row(Z_hat_im[j],Z_hat_im[j]))
+									);
+	}
+}
+model {
+	upsilon ~ gamma(ups_alpha,ups_beta);
+	for (j in 1:J) {
+		R_HN_base[j] ~ exponential(upsilon);
+	}
+	
+	// offsets
+	Rinf_base_raw ~ std_normal();
+	induc_raw ~ std_normal();
+	
+	// Arrhenius parameters
+	for (j in 1:J) {
+		//delta_G_Rinf[j] ~ inv_gamma(dG_alpha,dG_beta);
+		//delta_G ~ inv_gamma(dG_alpha,dG_beta);
+		ln_phi_tau_raw[j] ~ std_normal();
+	}
+	
+	// parameter differences
+	for (k in 1:K) {
+		diff_lntau[k] ~ std_normal();
+		diff_lnR[k] ~ std_normal();
+		diff_alpha[k] ~ std_normal();
+		diff_beta[k] ~ std_normal();
+		diff_deltaG[k] ~ std_normal();
+		diff_lnphi[k] ~ std_normal();
+	}
+	
+	// parameter std deviations
+	sigma_lntau_raw ~ std_normal();
+	sigma_lnR_raw ~ std_normal();
+	sigma_alpha_raw ~ std_normal();
+	sigma_beta_raw ~ std_normal();
+	sigma_deltaG_raw ~ std_normal();
+	sigma_lnphi_raw ~ std_normal();
+	
+	// impedance
+	for (j in 1:J) {
+		Z[j] ~ normal(Z_hat[j],sigma_tot[j]);
+	}
+	
+	// error structure
+	sigma_res_raw ~ std_normal();
+	alpha_prop_raw ~ std_normal();
+	alpha_re_raw ~ std_normal();
+	alpha_im_raw ~ std_normal();
+}
