@@ -110,7 +110,7 @@ def plot_jv(df, area=None, plot_pwr=True, ax=None, pwr_kw={'marker': 'o', 'mfc':
     return ax
 
 
-def plot_nyquist(df, area=None, ax=None, label='', plot_func='scatter', unit_scale='auto', label_size=10, eq_xy=True,
+def plot_nyquist(df, area=None, ax=None, label='', plot_func='scatter', unit_scale='auto', eq_xy=True,
                  **kw):
     """
 	Nyquist plot
@@ -158,12 +158,11 @@ def plot_nyquist(df, area=None, ax=None, label='', plot_func='scatter', unit_sca
         raise ValueError(f'Invalid plot type {plot_func}. Options are scatter, plot')
 
     if area is not None:
-        ax.set_xlabel(f'$Z^\prime \ / \ \mathrm{{{unit_scale}}}\Omega\cdot \mathrm{{cm}}^2$', size=label_size)
-        ax.set_ylabel(f'$-Z^{{\prime\prime}} \ / \ \mathrm{{{unit_scale}}}\Omega\cdot \mathrm{{cm}}^2$',
-                      size=label_size)
+        ax.set_xlabel(f'$Z^\prime \ / \ \mathrm{{{unit_scale}}}\Omega\cdot \mathrm{{cm}}^2$')
+        ax.set_ylabel(f'$-Z^{{\prime\prime}} \ / \ \mathrm{{{unit_scale}}}\Omega\cdot \mathrm{{cm}}^2$')
     else:
-        ax.set_xlabel(f'$Z^\prime \ / \ \mathrm{{{unit_scale}}}\Omega$', size=label_size)
-        ax.set_ylabel(f'$-Z^{{\prime\prime}} \ / \ \mathrm{{{unit_scale}}}\Omega$', size=label_size)
+        ax.set_xlabel(f'$Z^\prime \ / \ \mathrm{{{unit_scale}}}\Omega$')
+        ax.set_ylabel(f'$-Z^{{\prime\prime}} \ / \ \mathrm{{{unit_scale}}}\Omega$')
 
     if label != '':
         ax.legend()
@@ -384,9 +383,8 @@ def plot_eis(df, plot_type='all', area=None, axes=None, label='', plot_func='sca
         axes = plot_bode(df, area=area, label=label, axes=axes, plot_func=plot_func, cols=bode_cols,
                          unit_scale=unit_scale, **kw)
     elif plot_type == 'nyquist':
-        axes = plot_nyquist(df, area=area, label=label, ax=axes, plot_func=plot_func, unit_scale=unit_scale,
-                            eq_xy=eq_xy,
-                            **kw)
+        axes = plot_nyquist(df, area=area, ax=axes, label=label, plot_func=plot_func, unit_scale=unit_scale,
+                            eq_xy=eq_xy, **kw)
     elif plot_type == 'all':
         if axes is None:
             fig, axes = plt.subplots(1, 3, figsize=(9, 2.75))
@@ -396,7 +394,7 @@ def plot_eis(df, plot_type='all', area=None, axes=None, label='', plot_func='sca
             fig = axes.ravel()[0].get_figure()
 
         # Nyquist plot
-        plot_nyquist(df, area=area, label=label, ax=ax1, plot_func=plot_func, unit_scale=unit_scale, eq_xy=eq_xy, **kw)
+        plot_nyquist(df, area=area, ax=ax1, label=label, plot_func=plot_func, unit_scale=unit_scale, eq_xy=eq_xy, **kw)
 
         # Bode plots
         plot_bode(df, area=area, label=label, axes=(ax2, ax3), plot_func=plot_func, cols=bode_cols,
@@ -548,7 +546,7 @@ def plot_resid(df, inv, axes, unit_scale='auto', plot_ci=True, predict_kw={}):
     else:
         err_scale = bayes_drt.utils.get_factor_from_unit(unit_scale)
 
-    plot_bode(df_err, axes=axes, s=10, alpha=0.5, cols=['Zreal', 'Zimag'], unit_scale=unit_scale)
+    plot_bode(df_err, axes=axes, s=10, alpha=0.5, cols=['Zreal', 'Zimag'], unit_scale=unit_scale, label='Residuals')
     if (inv.fit_type == 'bayes' or inv.fit_type[:3] == 'map') and plot_ci:
         sigma_re, sigma_im = inv.predict_sigma(freq, **predict_kw)
         axes[0].fill_between(freq, -3 * sigma_re / err_scale, 3 * sigma_re / err_scale, color='k', alpha=0.15,
@@ -558,6 +556,8 @@ def plot_resid(df, inv, axes, unit_scale='auto', plot_ci=True, predict_kw={}):
 
     for ax in axes:
         ax.axhline(0, c='k', lw=0.5)
+
+    axes[1].legend()
 
     axes[0].set_ylabel(fr'$\hat{{Z}}^{{\prime}}-Z^{{\prime}}$ / {unit_scale}$\Omega$')
     axes[1].set_ylabel(fr'$-(\hat{{Z}}^{{\prime\prime}}-Z^{{\prime\prime}})$ / {unit_scale}$\Omega$')
@@ -586,8 +586,8 @@ def plot_drt_fit(df, inv, axes, plot_type='all', bode_cols=['Zreal', 'Zimag'], p
                  label=label, area=area, **kw)
     elif plot_type == 'nyquist':
         if plot_data:
-            plot_nyquist(df, ax=axes, label=data_label, area=area, unit_scale=unit_scale, **data_defaults)
-        plot_nyquist(df_pred, ax=axes, plot_func='plot', color=color, unit_scale=unit_scale, label=label, area=area,
+            plot_nyquist(df, area=area, ax=axes, label=data_label, unit_scale=unit_scale, **data_defaults)
+        plot_nyquist(df_pred, area=area, ax=axes, label=label, plot_func='plot', unit_scale=unit_scale, color=color,
                      **kw)
     elif plot_type == 'bode':
         if plot_data:
@@ -609,7 +609,7 @@ def plot_drt_result(df, inv, bode_cols=['Zreal', 'Zimag'], plot_data=True, color
 
     # plot Z fit
     plot_drt_fit(df, inv, axes[0], bode_cols=bode_cols, color=color, f_pred=f_pred, plot_data=plot_data,
-                 predict_kw=predict_kw)
+                 predict_kw=predict_kw, data_label='Data', label='Fit')
 
     # plot DRT
     if 'times' in predict_kw.keys():
