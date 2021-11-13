@@ -249,6 +249,15 @@ class Inverter:
 			Larger values regularize phase offsets more strongly, leading to smaller offset values.
 		init_phase_offset: bool, optional (default: False)
 			If True, estimate phase offsets and adjust Z before first DRT fit.
+
+		other parameters:
+		-----------------
+		dZ: bool, optional (default: False)
+		    For testing only
+		dZ_power: float, optional (default: 0.5)
+		    For testing only
+		x0: array, optional (default: None)
+		    Initial parameters for optimization. If None, initalize all coefficients near zero.
 		"""
         # apply presets
         presets = ['Ciucci', 'Huang']
@@ -1055,6 +1064,225 @@ class Inverter:
     # ===============================================
     # Methods for fitting hierarchical Bayesian model
     # ===============================================
+    def fit(self, frequencies, Z, part='both', scale_Z=True, nonneg=False, outliers=False, check_outliers=True,
+            init_from_ridge=False, ridge_kw={},
+            sigma_min=0.002, inductance_scale=1, outlier_lambda=None,
+            mode='optimize', random_seed=1234,
+            # Optimization control
+            max_iter=50000,
+            # Sampling control
+            warmup=200, sample=200, chains=2,
+            add_stan_data={}, model_str=None,
+            fitY=False, SA=False, SASY=False):
+        """
+        Fit the defined distribution(s) using the calibrated hierarchical Bayesian model.
+        Model may be fitted either via optimization (maximum a posteriori estimate) or HMC sampling.
+
+        Parameters:
+        -----------
+        frequencies: array
+            Measured frequencies
+        Z: complex array
+            Measured (complex) impedance values. Must have same length as frequencies
+        part: str, optional (default: 'both')
+            Which part of the impedance data to fit. Options: 'both', 'real', 'imag'
+        scale_Z: bool, optional (default: True)
+            If True, scale impedance by the factor sqrt(N)/std(|Z|) to normalize for magnitude and sample size.
+            Model is calibrated for scaled data.
+        nonneg: bool, optional (default: False)
+            If True, constrain the DRT to non-negative values
+        outliers: bool or str, optional (default: False)
+            If True, use outlier-robust error model.
+            If 'auto', check for likely outliers and automatically determine whether to use outlier model.
+            If False, use regular error model.
+            Set to True if you know your data contains outliers, set to False if you know it doesn't, or
+            set to 'auto' to let the system make the determination (this is especially useful for batch fits
+            in which some spectra contain outliers and others don't).
+        check_outliers: bool, optional (default: True)
+            If True, check for likely outliers after performing MAP fit.
+            If False, skip outlier check.
+            May find possible outliers that were not identified by initial check when outliers='auto'
+            due to better estimate of error structure from MAP fit.
+        init_from_ridge: bool, optional (default: False)
+            If True, use the hyperparametric ridge solution to initialize the Bayesian fit.
+            Only valid for single-distribution fits
+        ridge_kw: dict, optional (default: {})
+            Keyword arguments to pass to ridge_fit if init_from_ridge==True.
+        sigma_min: float, optional (default: 0.002)
+            Impedance error floor. This is necessary to avoid sampling/optimization errors.
+            Values smaller than the default (0.002) may enable slightly closer fits of very clean data,
+            but may also result in sampling/optimization errors that yield unexpected results.
+        inductance_scale: float, optional (default: 1)
+            Scale (std of normal prior) of the inductance. Lower values will constrain the inductance,
+            which may be helpful if the estimated inductance is anomalously large (this may occur if your
+            measured impedance data does not extend to high frequencies, i.e. 1e5-1e6 Hz)
+        outlier_lambda: float, optional (default: None)
+            Lambda parameter (inverse scale) of the exponential prior on the outlier error contribution.
+            Smaller values will make it easier for points to be flagged as outliers.
+            Sampling and optimization modes may require different values. Defaults to 10 for both
+        mode: str, optional (default: 'optimize')
+            Solution mode. If 'optimize', use the L-BFGS-B algorithm to obtain the MAP estimate of the solution.
+            If 'sample', use HMC sampling to estimate the posterior distribution.
+        random_seed: int, optional (default: 1234)
+            Random seed for optimization or sampling
+        max_iter: int, optional (default: 50000)
+            Maximum number of iterations to allow the optimizer to perform. Only used when mode='optimize'.
+        warmup: int, optional (default: 200)
+            Number of warmup or burn-in samples to draw. These samples will not contribute to the esimate of the
+            posterior distribution. Only used when mode='sample'.
+        sample: int, optional (default: 200)
+            Number of samples to draw after warm-up. These samples constitute the estimate of the posterior
+            distribution. The total number of samples will be sample*chains. Only used when mode='sample'.
+        chains: int, optional (default: 2)
+            Number of chains to sample in parallel. Only used when mode='sample'.
+        add_stan_data: dict, optional (default: {})
+            Additional parameters to provide as data inputs to the Stan model. Can be used to adjust hyperparameters
+            if you know what you're doing and/or are developing a model.
+        model_str: str, optional (default: None)
+            String to specify different model file. For troubleshooting and model development
+        fitY: bool, optional (default: False)
+            If True, fit admittance. Only valid when fitting a parallel distribution.
+        SA, SASY: bool
+            For testing only
+        """
+        # perform scaling and weighting and get A and B matrices
+        frequencies, Z_scaled, WZ_re, WZ_im, W_re, W_im, dist_mat = self._prep_matrices(frequencies, Z, part,
+                                                                                        weights=None, dZ=False,
+                                                                                        scale_Z=scale_Z,
+                                                                                        penalty='discrete',
+                                                                                        fit_type='map')
+
+        # get initial fit
+        if init_from_ridge:
+            if len(self.distributions) > 1:
+                raise ValueError('Ridge initialization can only be performed for single-distribution fits')
+            else:
+                init = self._get_init_from_ridge(frequencies, Z, nonneg=nonneg, outliers=outliers,
+                                                 inductance_scale=inductance_scale, ridge_kw=ridge_kw)
+                self._init_params = init()
+        else:
+            init = 'random'
+
+        # check for outliers. Use more stringent threshold to avoid false positives
+        if outliers == 'auto':
+            # If initial ridge fit performed, use existing ridge fit. Otherwise perform new ridge fit
+            if init_from_ridge:
+                use_existing_fit = True
+            else:
+                use_existing_fit = False
+            outlier_idx = self.check_outliers(frequencies, Z, threshold=4, use_existing_fit=use_existing_fit,
+                                              **ridge_kw)
+
+            if len(outlier_idx) > 0:
+                outliers = True
+                warnings.warn(
+                    'Identified likely outliers at indices {}, f={} Hz. An outlier-robust error model will be used. To disable this behavior, pass outliers=False.'.format(
+                        outlier_idx, frequencies[outlier_idx]))
+            else:
+                outliers = False
+
+        # load stan model
+        if model_str is None:
+            model, model_str = self._get_stan_model(nonneg, outliers, False, None, fitY, SA)
+        else:
+            model = load_pickle(os.path.join(script_dir, 'stan_model_files', model_str))
+        self.stan_model_name = model_str
+        model_type = model_str.split('_')[0]
+        if model_type == 'Series-Parallel' and nonneg == False:
+            warnings.warn('For mixed series-parallel models, it is highly recommended to set nonnneg_drt=True')
+
+        # prepare data for stan model
+        dat = self._prep_stan_data(frequencies, Z_scaled, part, model_type, dist_mat, outliers, sigma_min,
+                                   mode=mode,
+                                   inductance_scale=inductance_scale, outlier_lambda=outlier_lambda,
+                                   fitY=fitY, SA=SA, SASY=SASY)
+
+        # add user-supplied stan inputs
+        dat.update(add_stan_data)
+
+        if outliers:
+            # outlier models have been updated to use N instead of 2*N
+            # other models will be updated later
+            dat['N'] = len(frequencies)
+        self._stan_input = dat.copy()
+
+        # optimize or sample posterior
+        if mode == 'optimize':
+            self._opt_result = model.optimizing(dat, iter=max_iter, seed=random_seed, init=init)
+        elif mode == 'sample':
+            self._sample_result = model.sampling(dat, warmup=warmup, iter=warmup + sample, chains=chains,
+                                                 seed=random_seed,
+                                                 init=init,
+                                                 control={'adapt_delta': 0.9, 'adapt_t0': 10})
+
+        # extract coefficients
+        self.distribution_fits = {}
+        self.error_fit = {}
+        if model_type in ['Series', 'Parallel']:
+            dist_name = [k for k, v in self.distributions.items() if v['dist_type'] == model_type.lower()][0]
+            dist_type = self.distributions[dist_name]['dist_type']
+            self.distribution_fits[dist_name] = {'coef': self._extract_parameter('x', dist_type, mode)}
+
+        elif model_type == 'Series-Parallel':
+            for dist_name, dist_info in self.distributions.items():
+                if dist_info['dist_type'] == 'series':
+                    self.distribution_fits[dist_name] = {
+                        'coef': self._extract_parameter('xs', dist_info['dist_type'], mode)}
+                elif dist_info['dist_type'] == 'parallel':
+                    self.distribution_fits[dist_name] = {
+                        'coef': self._extract_parameter('xp', dist_info['dist_type'], mode)}
+
+        elif model_type == 'Series-2Parallel':
+            for dist_name, dist_info in self.distributions.items():
+                if dist_info['dist_type'] == 'series':
+                    self.distribution_fits[dist_name] = {
+                        'coef': self._extract_parameter('xs', dist_info['dist_type'], mode)}
+                elif dist_info['dist_type'] == 'parallel':
+                    order = dist_info['order']
+                    self.distribution_fits[dist_name] = {
+                        'coef': self._extract_parameter(f'xp{order}', dist_info['dist_type'], mode)}
+
+        elif model_type == 'MultiDist':
+            """Placeholder"""
+            for dist_name, dist_info in self.distributions.items():
+                if dist_info['kernel'] == 'DRT':
+                    self.distribution_fits[dist_name] = {
+                        'coef': self._extract_parameter('xs', dist_info['dist_type'], mode)}
+                elif dist_info['kernel'] == 'DDT':
+                    self.distribution_fits[dist_name] = {
+                        'coef': self._extract_parameter('xp', dist_info['dist_type'], mode)}
+        if not fitY:
+            self.R_inf = self._extract_parameter('Rinf', 'series', mode)
+            self.inductance = self._extract_parameter('induc', 'series', mode)
+        else:
+            self.R_inf = 0
+            self.inductance = 0
+
+        # store error structure parameters
+        # scaled parameters
+        self.error_fit['sigma_min'] = self._rescale_coef(sigma_min, 'series')
+        for param in ['sigma_tot', 'sigma_res']:
+            self.error_fit[param] = self._extract_parameter(param, 'series', mode)
+        # unscaled parameters
+        for param in ['alpha_prop', 'alpha_re', 'alpha_im']:
+            self.error_fit[param] = self._extract_parameter(param, None, mode)
+        # outlier contribution
+        if outliers == True:
+            self.error_fit['sigma_out'] = self._extract_parameter('sigma_out', 'series', mode)
+
+        if mode == 'optimize':
+            self.fit_type = 'map'
+        elif mode == 'sample':
+            self.fit_type = 'bayes'
+
+        # check if outliers were missed
+        if outliers == False and check_outliers:
+            outlier_idx = self.check_outliers(frequencies, Z, threshold=3.5, use_existing_fit=True)
+            if len(outlier_idx) > 0:
+                warnings.warn(
+                    'Possible outliers were identified at indices {}, f={} Hz. Check the residuals and consider re-running with outliers=True'.format(
+                        outlier_idx, frequencies[outlier_idx]))
+
     def map_fit(self, frequencies, Z, part='both', scale_Z=True, init_from_ridge=False, nonneg=False,
                 outliers=False, check_outliers=True,
                 sigma_min=0.002, max_iter=50000, random_seed=1234, inductance_scale=1, outlier_lambda=10, ridge_kw={},
@@ -1840,6 +2068,13 @@ class Inverter:
 		mode: str
 			Solution mode. Options: 'sample', 'optimize'
 		"""
+
+        if outlier_lambda is None:
+            if mode == 'optimize':
+                outlier_lambda = 10
+            elif mode == 'sample':
+                outlier_lambda = 10
+
         if model_type in ['Series', 'Parallel']:
             dist_name = [k for k, v in self.distributions.items() if v['dist_type'] == model_type.lower()][0]
             matrices = dist_mat[dist_name]
@@ -2001,6 +2236,7 @@ class Inverter:
 
             if outliers:
                 dat['sigma_out_lambda'] = outlier_lambda
+
                 if mode == 'optimize':
                     dat['sigma_out_alpha'] = 2
                 elif mode == 'sample':
@@ -2618,6 +2854,33 @@ class Inverter:
         q = np.sqrt(d0 * (L0 @ x) ** 2 + d1 * (L1 @ x) ** 2 + d2 * (L2 @ x) ** 2)
 
         return q
+
+    def _extract_parameter(self, stan_key, dist_type, mode):
+        """
+        Extract parameter from stan model result
+        Parameters
+        ----------
+        stan_key:
+        dist_type
+        mode
+
+        Returns
+        -------
+
+        """
+        if mode == 'optimize':
+            if stan_key in ['alpha_prop', 'alpha_re', 'alpha_im']:
+                # Error structure coefficients - not scaled
+                return self._opt_result[stan_key]
+            else:
+                # Scale all other parameters
+                return self._rescale_coef(self._opt_result[stan_key], dist_type)
+        elif mode == 'sample':
+            if stan_key in ['alpha_prop', 'alpha_re', 'alpha_im']:
+                # Error structure coefficients - not scaled
+                return np.mean(self._sample_result[stan_key])
+            else:
+                return self._rescale_coef(np.mean(self._sample_result[stan_key], axis=0), dist_type)
 
     def _get_stan_coef_name(self, distribution_name):
         """Get stan model coefficient name for distribution
@@ -3695,9 +3958,12 @@ class Inverter:
     # Methods for saving and loading fits
     # ===============================================
     def get_fit_attributes(self, which='all'):
-        fit_attributes = {'common': {
-            'core': ['distributions', 'distribution_fits', 'f_train', '_Z_scale', 'fit_type', 'R_inf', 'inductance'],
-            'detail': ['distribution_matrices']},
+        fit_attributes = {
+            'common': {
+                'core': ['distributions', 'distribution_fits', 'f_train', 'Z_train', '_Z_scale', 'fit_type',
+                         'R_inf', 'inductance'],
+                'detail': ['distribution_matrices']
+            },
             'ridge': {'core': [], 'detail': ['_iter_history']},
             'map': {'core': ['stan_model_name', 'error_fit'],
                     'detail': ['_stan_input', '_init_params', '_opt_result']},
@@ -3716,6 +3982,25 @@ class Inverter:
         return att
 
     def save_fit_data(self, filename=None, which='all'):
+        """
+        Save fit data to a file
+        Parameters
+        ----------
+        filename : str (default: None)
+            Path to file in which to save fit data. If None, return a dict of fit data
+        which : str (default: 'all')
+            Which data to save. Options:
+                'core': save essential fit parameters only. Does not save matrices required for prediction (these can be
+                    recalculated easily), initialization parameters, stan model inputs, or extraneous hyperparameters.
+                    Recommended if saving a large number of fits to reduce storage requirements.
+                'detail': save detail data and parameters only. Does NOT save essential parameters.
+                'all': save both core and detail parameters and data. Requires substantial storage. Recommended if
+                    saving a small number of fits to maintain access to all attributes.
+        Returns
+        -------
+        fit_data : dict
+            Dict of fit data. Only returned if filename is None
+        """
         # get names of attributes to be stored
         store_att = self.get_fit_attributes(which)
 
