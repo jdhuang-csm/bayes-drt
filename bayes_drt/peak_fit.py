@@ -65,8 +65,15 @@ def evaluate_fit_impedance(x, freq, R_inf=0, inductance=0):
     return Z
 
 
-def fit_peaks(tau, gamma, weights=None, nonneg=True, check_shoulders=False, prom_rthresh=0.001, R_rthresh=0.005,
-              check_chi_sq=False, chi_sq_thresh=0.4, chi_sq_delta=0.2):
+def peak_fit_residuals(x, tau, gamma, Rp, weights, l1_penalty, l2_penalty):
+    resid = evaluate_fit_distribution(x, tau) - gamma
+    l1 = np.sqrt(np.abs(x[::4] / Rp)) * l1_penalty
+    l2 = (x[::4] / Rp) * l2_penalty
+    return np.concatenate([resid * weights, l1, l2])
+
+
+def fit_peaks(tau, gamma, Rp, weights=None, nonneg=True, check_shoulders=False, prom_rthresh=0.001, R_rthresh=0.005,
+              check_chi_sq=False, chi_sq_thresh=0.4, chi_sq_delta=0.2, l1_penalty=0, l2_penalty=0.01):
     """
 	Fit HN peaks to distribution. 
 	First identify number of peaks and their locations, 
@@ -85,8 +92,8 @@ def fit_peaks(tau, gamma, weights=None, nonneg=True, check_shoulders=False, prom
 	"""
 
     if nonneg:
-        x = fit_pos_peaks(tau, gamma, weights, check_shoulders, prom_rthresh, R_rthresh,
-                          check_chi_sq, chi_sq_thresh, chi_sq_delta)
+        x = fit_pos_peaks(tau, gamma, Rp, weights, check_shoulders, prom_rthresh, R_rthresh, check_chi_sq, chi_sq_thresh,
+                          chi_sq_delta, l1_penalty, l2_penalty)
     else:
         # Fit positive and negative portions of gamma separately
         gamma_zeros = np.array([gamma, np.zeros_like(gamma)])
@@ -94,19 +101,14 @@ def fit_peaks(tau, gamma, weights=None, nonneg=True, check_shoulders=False, prom
         gamma_neg = np.min(gamma_zeros, axis=0)
         # print(gamma_neg)
         min_weight_deno = np.percentile(np.abs(gamma), 80)
-        x_pos = fit_pos_peaks(tau, gamma_pos, weights, check_shoulders, prom_rthresh, R_rthresh,
-                              check_chi_sq, chi_sq_thresh, chi_sq_delta, min_weight_deno)
-        x_neg = fit_pos_peaks(tau, -gamma_neg, weights, check_shoulders, prom_rthresh, R_rthresh,
-                              check_chi_sq, chi_sq_thresh, chi_sq_delta, min_weight_deno)
+        x_pos = fit_pos_peaks(tau, gamma_pos, Rp, weights, check_shoulders, prom_rthresh, R_rthresh, check_chi_sq,
+                              chi_sq_thresh, chi_sq_delta, min_weight_deno, l1_penalty, l2_penalty)
+        x_neg = fit_pos_peaks(tau, -gamma_neg, Rp, weights, check_shoulders, prom_rthresh, R_rthresh, check_chi_sq,
+                              chi_sq_thresh, chi_sq_delta, min_weight_deno, l1_penalty, l2_penalty)
         x_neg[0::4] *= -1  # make R values negative in x_neg
         x0 = np.concatenate((x_pos, x_neg))
 
         # Perform a final fit of positive and negative peaks together
-        def resid(x, weights):
-            resid = evaluate_fit_distribution(x, tau) - gamma
-            # inv_weights = gamma + np.percentile(gamma,80)
-            return resid * weights
-
         # set bounds: 0<=alpha<=1, 0<=beta<=1. log_tau must be +/-0.1 from value obtained from separate fits
         weights = 1 / (gamma + min_weight_deno)
         lb = np.zeros_like(x0)
@@ -118,14 +120,16 @@ def fit_peaks(tau, gamma, weights=None, nonneg=True, check_shoulders=False, prom
             lb[4 * i:4 * i + 4] = [-np.inf, log_t0 - 0.1, 0, 0]
             ub[4 * i:4 * i + 4] = [np.inf, log_t0 + 0.1, 1, 1]
 
-        result = least_squares(resid, x0, args=(weights,), bounds=(lb, ub))
-        x = filter_peaks(result['x'], R_rthresh)
+        result = least_squares(peak_fit_residuals, x0, args=(tau, gamma, Rp, weights, l1_penalty, l2_penalty),
+                               bounds=(lb, ub))
+        x = filter_peaks(result['x'], R_rthresh, Rp)
 
     return x
 
 
-def fit_pos_peaks(tau, gamma, weights=None, check_shoulders=False, prom_rthresh=0.001, R_rthresh=0.005,
-                  check_chi_sq=False, chi_sq_thresh=0.4, chi_sq_delta=0.2, min_weight_deno=None):
+def fit_pos_peaks(tau, gamma, Rp, weights=None, check_shoulders=False, prom_rthresh=0.001, R_rthresh=0.005,
+                  check_chi_sq=False, chi_sq_thresh=0.4, chi_sq_delta=0.2, min_weight_deno=None,
+                  l1_penalty=0, l2_penalty=0.01):
     """
 	Fit HN peaks to distribution. 
 	First identify number of peaks and their locations, 
@@ -146,7 +150,7 @@ def fit_pos_peaks(tau, gamma, weights=None, check_shoulders=False, prom_rthresh=
         raise ValueError('tau and gamma must have same length')
 
     # identify peaks
-    peaks, properties = find_peaks(gamma, width=1, prominence=prom_rthresh * np.max(gamma))
+    peaks, properties = find_peaks(gamma, width=1, prominence=prom_rthresh * Rp)  # np.max(gamma))
 
     # get initial parameter estimates
     x0 = np.zeros(len(peaks) * 4)  # each peak has 4 parameters: R, t0, gamma, beta
@@ -170,11 +174,6 @@ def fit_pos_peaks(tau, gamma, weights=None, check_shoulders=False, prom_rthresh=
         raise ValueError('Length of weights must match length of gamma')
 
     # fit parameters to gamma
-    def resid(x, weights):
-        resid = evaluate_fit_distribution(x, tau) - gamma
-        # inv_weights = gamma + np.percentile(gamma,80)
-        return resid * weights
-
     # set bounds: R>=0, 0<=alpha<=1, 0<=beta<=1. log_tau must be +/-0.25 from estimate from find_peaks
     lb = np.zeros_like(x0)
     ub = np.zeros_like(x0)
@@ -185,10 +184,11 @@ def fit_pos_peaks(tau, gamma, weights=None, check_shoulders=False, prom_rthresh=
         lb[4 * i:4 * i + 4] = [0, log_t0 - 0.25, 0, 0]
         ub[4 * i:4 * i + 4] = [np.inf, log_t0 + 0.25, 1, 1]
 
-    result = least_squares(resid, x0, args=(weights,), bounds=(lb, ub))
+    result = least_squares(peak_fit_residuals, x0, args=(tau, gamma, Rp, weights, l1_penalty, l2_penalty),
+                           bounds=(lb, ub))
 
     # only keep peaks that meet relative R threshold
-    x_filter = filter_peaks(result['x'], R_rthresh)
+    x_filter = filter_peaks(result['x'], R_rthresh, Rp)
     num_peaks = int(len(x_filter) / 4)
 
     if check_shoulders:
@@ -256,9 +256,10 @@ def fit_pos_peaks(tau, gamma, weights=None, check_shoulders=False, prom_rthresh=
                 lb[4 * i:4 * i + 4] = [0, log_t0 - 0.25, 0, 0]
                 ub[4 * i:4 * i + 4] = [np.inf, log_t0 + 0.25, 1, 1]
             # print(x0)
-            result = least_squares(resid, x0, args=(weights,), bounds=(lb, ub))
+            result = least_squares(peak_fit_residuals, x0, args=(tau, gamma, Rp, weights, l1_penalty, l2_penalty),
+                                   bounds=(lb, ub))
 
-            x_filter = filter_peaks(result['x'], R_rthresh)
+            x_filter = filter_peaks(result['x'], R_rthresh, Rp)
 
     if check_chi_sq:
         # Check chi_sq of fit. If above threshold, add a peak and re-fit
@@ -300,9 +301,10 @@ def fit_pos_peaks(tau, gamma, weights=None, check_shoulders=False, prom_rthresh=
                 lb[4 * i:4 * i + 4] = [0, log_t0 - 0.25, 0, 0]
                 ub[4 * i:4 * i + 4] = [np.inf, log_t0 + 0.25, 1, 1]
 
-            result = least_squares(resid, x0, args=(weights,), bounds=(lb, ub))
+            result = least_squares(peak_fit_residuals, x0, args=(tau, gamma, Rp, weights, l1_penalty, l2_penalty),
+                                   bounds=(lb, ub))
 
-            x_filter_new = filter_peaks(result['x'], R_rthresh)
+            x_filter_new = filter_peaks(result['x'], R_rthresh, Rp)
             new_chi_sq = np.sum((resid(x_filter_new, weights)) ** 2)
             # check if chi_sq improvement exceeds chi_sq_delta
             if new_chi_sq <= chi_sq - chi_sq_delta:
@@ -377,10 +379,10 @@ def fit_data(x0, freq, Z, R_inf=0, inductance=0, weights=None, lambda_x=10):
     return result
 
 
-def filter_peaks(x, rthresh):
+def filter_peaks(x, rthresh, Rp):
     # get R values relative to max
     R_vals = x[::4]
-    R_rel = np.abs(R_vals) / np.max(np.abs(R_vals))
+    R_rel = np.abs(R_vals / Rp)  #/ np.max(np.abs(R_vals))
     # get indices of significant peaks
     big_idx = np.where(R_rel >= rthresh)
 
@@ -392,14 +394,15 @@ def filter_peaks(x, rthresh):
     return x_out
 
 
-def constrained_peak_fit(tau, gamma, tau0_guess, lntau_uncertainty=3, sigma_lntau=5, weights=None):
+def constrained_peak_fit(tau, gamma, tau0_guess, Rp, nonneg, lntau_uncertainty=3, sigma_lntau=5, weights=None,
+                         l2_penalty=0.01):
     num_peaks = len(tau0_guess)
 
     if len(tau) != len(gamma):
         raise ValueError('tau and gamma must have same length')
 
     if weights is None:
-        weights = 1 / (gamma + np.percentile(gamma, 80))
+        weights = 1 / (gamma + np.percentile(np.abs(gamma), 80))
     elif len(weights) != len(gamma):
         raise ValueError('Length of weights must match length of gamma')
 
@@ -420,7 +423,8 @@ def constrained_peak_fit(tau, gamma, tau0_guess, lntau_uncertainty=3, sigma_lnta
         gamma_resid = evaluate_fit_distribution(x, tau) - gamma
         lntau0 = x[1::4]
         tau_resid = (lntau0 - np.log(tau0_guess))
-        return np.concatenate((gamma_resid * weights, tau_resid / sigma_lntau))
+        l2 = (x[::4] / Rp) * l2_penalty
+        return np.concatenate((gamma_resid * weights, tau_resid / sigma_lntau, l2))
 
     # set bounds: R>=0, 0<=alpha<=1, 0<=beta<=1. log_tau must be +/-lntau_uncertainty from tau0_guess
     lb = np.zeros_like(x0)
@@ -429,8 +433,20 @@ def constrained_peak_fit(tau, gamma, tau0_guess, lntau_uncertainty=3, sigma_lnta
     for i in range(0, num_peaks):
         xi = x0[4 * i:4 * i + 4]
         R, log_t0, alpha, beta = xi
-        lb[4 * i:4 * i + 4] = [0, log_t0 - lntau_uncertainty, 0, 0]
-        ub[4 * i:4 * i + 4] = [np.inf, log_t0 + lntau_uncertainty, 1, 1]
+        if nonneg:
+            # Constrain R to non-negative values
+            R_lb = 0
+            R_ub = np.inf
+        else:
+            # Constrain R to have same sign as initial estimate from integration
+            if R > 0:
+                R_lb = 0
+                R_ub = np.inf
+            else:
+                R_lb = -np.inf
+                R_ub = 0
+        lb[4 * i:4 * i + 4] = [R_lb, log_t0 - lntau_uncertainty, 0, 0]
+        ub[4 * i:4 * i + 4] = [R_ub, log_t0 + lntau_uncertainty, 1, 1]
 
     result = least_squares(resid, x0, args=(weights,), bounds=(lb, ub))
 
