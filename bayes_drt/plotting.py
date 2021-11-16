@@ -811,8 +811,11 @@ def plot_full_results(df, inv, axes=None, bode_cols=['Zreal', 'Zimag'], plot_dat
                           label='Final', plot_ci=plot_drt_ci)
         axes[1, 0].legend()
     else:
-        plot_distribution(df, inv, axes[1, 0], color=color, plot_bounds=plot_data, tau_plot=tau_plot,
+        plot_distribution(df, inv, axes[1, 0], color=color, plot_bounds=plot_data, tau_plot=tau_plot, ci_label='95% CI',
                           predict_kw=predict_kw, plot_ci=plot_drt_ci)
+
+        if plot_drt_ci and inv.fit_type == 'bayes':
+            axes[1, 0].legend()
 
     # plot error
     plot_residuals(df, inv, axes[1, 1:], plot_ci=plot_ci, predict_kw=predict_kw)
