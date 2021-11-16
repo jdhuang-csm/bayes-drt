@@ -11,6 +11,16 @@ The package also provides ordinary and hyperparametric ridge regression methods,
 
 Several tutorials are available in `tutorials`. Additional examples and documentation will be added soon. If GitHub fails to display the tutorials ("Sorry, something went wrong. Reload?"), you can view them by going to https://nbviewer.jupyter.org/ and pasting the URL for the desired tutorial in the search bar.
 
+## November 2021 update
+A substantial update was just pushed. If you are using a previous version of `bayes_drt`, there are several changes and additions to note:
+* The `map_fit` and `bayes_fit` methods have been condensed to a single `fit` method, which takes a `mode` argument (`mode='sample'` for HMC sampling, `mode='optimize'` for MAP estimate))
+* A new plotting module has been added, and several plotting methods are incorporated into the `Inverter` class
+* The module `eis_utils` has been refactored: file loading functions were moved from `eis_utils` to `file_load`, while impedance plotting methods were moved from `eis_utils` to `plotting`
+* Peak fitting functionality has been added
+* Automatic outlier detection has been added - when enabled, this will automatically determine whether the regular error model or the outlier error model should be used
+
+Tutorials have not yet been updated to reflect the changes, but will be soon.
+
 ## *Electrochimica Acta* article
 The methods implemented in `bayes_drt` are the subject of an article in *Electrochimica Acta* (https://doi.org/10.1016/j.electacta.2020.137493). The theory behind the model is described in detail in the journal article. All code used to generate the results in the manuscript are available here:
 * `data` contains all experimental and simulated data files.
