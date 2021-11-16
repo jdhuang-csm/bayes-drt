@@ -61,6 +61,7 @@ class Inverter:
         self._Z_scale = 1.0
         self._init_params = {}
         self.distribution_fits = {}
+        self._iter_history = None
 
     def set_distributions(self, distributions):
         """Set kernels for inversion
@@ -1161,7 +1162,7 @@ class Inverter:
             if len(self.distributions) > 1:
                 raise ValueError('Ridge initialization can only be performed for single-distribution fits')
             else:
-                init = self._get_init_from_ridge(frequencies, Z, nonneg=nonneg, outliers=outliers,
+                init = self._get_init_from_ridge(frequencies, Z, mode, nonneg=nonneg, outliers=outliers,
                                                  inductance_scale=inductance_scale, ridge_kw=ridge_kw)
                 self._init_params = init()
         else:
@@ -1412,7 +1413,7 @@ class Inverter:
             if len(self.distributions) > 1:
                 raise ValueError('Ridge initialization can only be performed for single-distribution fits')
             else:
-                init = self._get_init_from_ridge(frequencies, Z, nonneg=nonneg, outliers=outliers,
+                init = self._get_init_from_ridge(frequencies, Z, mode, nonneg=nonneg, outliers=outliers,
                                                  inductance_scale=inductance_scale, ridge_kw=ridge_kw)
                 self._init_params = init()
                 dist_name = list(self.distributions.keys())[0]
@@ -1612,7 +1613,7 @@ class Inverter:
 
         return model, model_str
 
-    def _get_init_from_ridge(self, frequencies, Z, nonneg, outliers, inductance_scale, ridge_kw):
+    def _get_init_from_ridge(self, frequencies, Z, mode, nonneg, outliers, inductance_scale, ridge_kw):
         """Get initial parameter estimate from ridge_fit
 		Parameters:
 		-----------
@@ -1650,9 +1651,12 @@ class Inverter:
         elif dist_type == 'parallel':
             x_star = coef * self._Z_scale
         iv = {'x': x_star}
+
         # estimate distribution complexity and initialize upsilon accordingly
-        q = self._calc_q('optimize', reg_strength=[1, 1, 1])
-        iv['ups_raw'] = q * 0.5 / 0.15
+        q = self._calc_q(mode, reg_strength=[1, 1, 1])
+        if mode == 'optimize':
+            # Only initialize upsilon for optimization. Let Stan initialize randomly for sampling
+            iv['ups_raw'] = q * 0.5 / 0.15
 
         # input other parameters
         iv['Rinf'] = self.R_inf / self._Z_scale
@@ -2477,7 +2481,6 @@ class Inverter:
             L0 *= 1.5 * 0.24
             L1 *= 1.5 * 0.16
             L2 *= 1.5 * 0.08
-            pass
         elif mode == 'sample':
             L2 *= 0.75
         # get regularization strengths
