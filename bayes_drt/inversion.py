@@ -7,11 +7,15 @@ import cvxopt
 import warnings
 import os
 from copy import deepcopy
+import matplotlib.pyplot as plt
 
 from .matrices import get_basis_func, construct_A, construct_L, construct_M
 from .stan_models import save_pickle, load_pickle
 from . import peak_fit as pf
-from .utils import check_equality, rel_round, get_outlier_thresh, r2_score
+from . import file_load as fl
+from . import plotting as bp
+from .utils import check_equality, rel_round, get_outlier_thresh, r2_score, \
+    get_unit_scale, get_scale_factor, get_factor_from_unit
 
 cvxopt.solvers.options['show_progress'] = False
 
@@ -56,6 +60,7 @@ class Inverter:
         self.f_pred = None
         self._Z_scale = 1.0
         self._init_params = {}
+        self.distribution_fits = {}
 
     def set_distributions(self, distributions):
         """Set kernels for inversion
@@ -337,7 +342,7 @@ class Inverter:
         # perform Re-Im CV to get optimal lambda_0
         if lambda_0 == 'cv':
             lambda_0 = self.ridge_ReImCV(frequencies, Z, lambdas=cv_lambdas,
-                                         penalty=penalty, hl_solution=hl_solution,
+                                         penalty=penalty, hyper_lambda=hyper_lambda, hl_solution=hl_solution,
                                          hl_beta=hl_beta, hl_fbeta=hl_fbeta,
                                          reg_ord=reg_ord, L1_penalty=L1_penalty,
                                          x0=x0, weights=weights, xtol=xtol, max_iter=max_iter,
@@ -407,8 +412,8 @@ class Inverter:
             A_im = np.zeros((A_im_main.shape[0], A_im_main.shape[1] + 2))
             A_im[:, 2:] = A_im_main
             if self.fit_inductance:
-                A_im[:,
-                1] = 2 * np.pi * frequencies * 1e-4  # scale the inductance column so that coef[1] doesn't drop below the tolerance of cvxopt
+                # scale the inductance column so that coef[1] doesn't drop below the tolerance of cvxopt
+                A_im[:, 1] = 2 * np.pi * frequencies * 1e-4
 
             # re-apply weight matrices to expanded A matrices
             WA_re = W_re @ A_re
@@ -861,7 +866,7 @@ class Inverter:
             Zi_pred = A_im[:, 2:] @ basis_coef
 
             def res_fun(x):
-                return Zi_pred + frequencies * 2 * np.pi * x - target_scaled.imag
+                return Zi_pred + frequencies * 2 * np.pi * 1e-4 * x - target_scaled.imag
 
             result = least_squares(res_fun, x0=1e-7)
             self.distribution_fits[dist_name]['coef'][1] = result['x'][0]
@@ -878,7 +883,7 @@ class Inverter:
             self.distribution_fits[dist_name]['coef'][1] *= 1e-4
 
         # If inductance not fitted, set inductance to zero to avoid confusion (goes to random number)
-        if dist_info['dist_type'] == 'series' and (self.fit_inductance == False or part == 'real'):
+        if dist_info['dist_type'] == 'series' and not self.fit_inductance:
             self.distribution_fits[dist_name]['coef'][1] = 0
 
         # pull R_inf and inductance out of coef
@@ -891,33 +896,32 @@ class Inverter:
             self.R_inf = 0
             self.inductance = 0
 
-        # self._recalc_mat = False
         self.fit_type = 'ridge'
 
     def ridge_ReImCV(self, frequencies, Z, lambdas=np.logspace(-10, 5, 31), **kw):
         """
-		Perform re-im cross-validation to obtain optimal lambda_0 value
+        Perform re-im cross-validation to obtain optimal lambda_0 value
 
-		Parameters:
-		-----------
-		frequencies: array
-			Measured frequencies
-		Z: complex array
-			Measured (complex) impedance values
-		lambdas: array
-			Array of lambda_0 values to evaulate
-		kw: various
-			Keyword args to pass to ridge_fit
-		"""
+        Parameters:
+        -----------
+        frequencies: array
+            Measured frequencies
+        Z: complex array
+            Measured (complex) impedance values
+        lambdas: array
+            Array of lambda_0 values to evaulate
+        kw: various
+            Keyword args to pass to ridge_fit
+"""
 
         recv = np.zeros_like(lambdas)
         imcv = np.zeros_like(lambdas)
 
         for i, lam in enumerate(lambdas):
-            self.ridge_fit(frequencies, Z, part='real', lambda_0=lam, hyper_lambda=False, **kw)
+            self.ridge_fit(frequencies, Z, part='real', lambda_0=lam, **kw)
             Zi_pred = np.imag(self.predict_Z(frequencies))
 
-            self.ridge_fit(frequencies, Z, part='imag', lambda_0=lam, hyper_lambda=False, **kw)
+            self.ridge_fit(frequencies, Z, part='imag', lambda_0=lam, **kw)
             Zr_pred = np.real(self.predict_Z(frequencies))
 
             Zr_err = np.sum((Z.real - Zr_pred) ** 2)
@@ -1064,14 +1068,14 @@ class Inverter:
     # ===============================================
     # Methods for fitting hierarchical Bayesian model
     # ===============================================
-    def fit(self, frequencies, Z, part='both', scale_Z=True, nonneg=False, outliers=False, check_outliers=True,
+    def fit(self, frequencies, Z, part='both', scale_Z=True, nonneg=True, outliers=False, check_outliers=True,
             init_from_ridge=False, ridge_kw={},
             sigma_min=0.002, inductance_scale=1, outlier_lambda=None,
             mode='optimize', random_seed=1234,
             # Optimization control
             max_iter=50000,
             # Sampling control
-            warmup=200, sample=200, chains=2,
+            warmup=200, samples=200, chains=2,
             add_stan_data={}, model_str=None,
             fitY=False, SA=False, SASY=False):
         """
@@ -1210,7 +1214,7 @@ class Inverter:
         if mode == 'optimize':
             self._opt_result = model.optimizing(dat, iter=max_iter, seed=random_seed, init=init)
         elif mode == 'sample':
-            self._sample_result = model.sampling(dat, warmup=warmup, iter=warmup + sample, chains=chains,
+            self._sample_result = model.sampling(dat, warmup=warmup, iter=warmup + samples, chains=chains,
                                                  seed=random_seed,
                                                  init=init,
                                                  control={'adapt_delta': 0.9, 'adapt_t0': 10})
@@ -1274,196 +1278,6 @@ class Inverter:
             self.fit_type = 'map'
         elif mode == 'sample':
             self.fit_type = 'bayes'
-
-        # check if outliers were missed
-        if outliers == False and check_outliers:
-            outlier_idx = self.check_outliers(frequencies, Z, threshold=3.5, use_existing_fit=True)
-            if len(outlier_idx) > 0:
-                warnings.warn(
-                    'Possible outliers were identified at indices {}, f={} Hz. Check the residuals and consider re-running with outliers=True'.format(
-                        outlier_idx, frequencies[outlier_idx]))
-
-    def map_fit(self, frequencies, Z, part='both', scale_Z=True, init_from_ridge=False, nonneg=False,
-                outliers=False, check_outliers=True,
-                sigma_min=0.002, max_iter=50000, random_seed=1234, inductance_scale=1, outlier_lambda=10, ridge_kw={},
-                add_stan_data={}, model_str=None,
-                fitY=False, SA=False, SASY=False):
-        """
-		Obtain the maximum a posteriori estimate of the defined distribution(s) (and all model parameters).
-
-		Parameters:
-		-----------
-		frequencies: array
-			Measured frequencies
-		Z: complex array
-			Measured (complex) impedance values. Must have same length as frequencies
-		part: str, optional (default: 'both')
-			Which part of the impedance data to fit. Options: 'both', 'real', 'imag'
-		scale_Z: bool, optional (default: True)
-			If True, scale impedance by the factor sqrt(N)/std(|Z|) to normalize for magnitude and sample size
-		init_from_ridge: bool, optional (default: False)
-			If True, use the hyperparametric ridge solution to initialize the Bayesian fit.
-			Only valid for single-distribution fits
-		nonneg: bool, optional (default: False)
-			If True, constrain the DRT to non-negative values
-		outliers: bool or str, optional (default: False)
-			If True, use outlier-robust error model.
-			If 'auto', check for likely outliers and automatically determine whether to use outlier model.
-			If False, use regular error model.
-			Set to True if you know your data contains outliers, set to False if you know it doesn't, or
-			set to 'auto' to let the system make the determination (this is especially useful for batch fits
-			in which some spectra contain outliers and others don't).
-		check_outliers: bool, optional (default: True)
-			If True, check for likely outliers after performing MAP fit.
-			If False, skip outlier check.
-			May find possible outliers that were not identified by initial check when outliers='auto'
-			due to better estimate of error structure from MAP fit.
-		sigma_min: float, optional (default: 0.002)
-			Impedance error floor. This is necessary to avoid sampling/optimization errors.
-			Values smaller than the default (0.002) may enable slightly closer fits of very clean data,
-			but may also result in sampling/optimization errors that yield unexpected results.
-		max_iter: int, optional (default: 50000)
-			Maximum number of iterations to allow the optimizer to perform
-		random_seed: int, optional (default: 1234)
-			Random seed for optimizer
-		inductance_scale: float, optional (default: 1)
-			Scale (std of normal prior) of the inductance. Lower values will constrain the inductance,
-			which may be helpful if the estimated inductance is anomalously large (this may occur if your
-			measured impedance data does not extend to high frequencies, i.e. 1e5-1e6 Hz)
-		outlier_lambda: float, optional (default: 5)
-			Lambda parameter (inverse scale) of the exponential prior on the outlier error contribution.
-			Smaller values will make it easier for points to be flagged as outliers
-		ridge_kw: dict, optional (default: {})
-			Keyword arguments to pass to ridge_fit if init_from_ridge==True.
-		add_stan_data: dict, optional (default: {})
-			Additional parameters to provide as data inputs to the Stan model
-		model_str: str, optional (default: None)
-			String to specify different model file. For troubleshooting and model development
-		"""
-        # perform scaling and weighting and get A and B matrices
-        frequencies, Z_scaled, WZ_re, WZ_im, W_re, W_im, dist_mat = self._prep_matrices(frequencies, Z, part,
-                                                                                        weights=None, dZ=False,
-                                                                                        scale_Z=scale_Z,
-                                                                                        penalty='discrete',
-                                                                                        fit_type='map')
-
-        # get initial fit
-        if init_from_ridge:
-            if len(self.distributions) > 1:
-                raise ValueError('Ridge initialization can only be performed for single-distribution fits')
-            else:
-                init = self._get_init_from_ridge(frequencies, Z, nonneg=nonneg, outliers=outliers,
-                                                 inductance_scale=inductance_scale, ridge_kw=ridge_kw)
-                self._init_params = init()
-        else:
-            init = 'random'
-
-        # check for outliers. Use more stringent threshold to avoid false positives
-        if outliers == 'auto':
-            # If initial ridge fit performed, use existing ridge fit. Otherwise perform new ridge fit
-            if init_from_ridge:
-                use_existing_fit = True
-            else:
-                use_existing_fit = False
-            outlier_idx = self.check_outliers(frequencies, Z, threshold=4, use_existing_fit=use_existing_fit,
-                                              **ridge_kw)
-
-            if len(outlier_idx) > 0:
-                outliers = True
-                warnings.warn(
-                    'Identified likely outliers at indices {}, f={} Hz. An outlier-robust error model will be used. To disable this behavior, pass outliers=False.'.format(
-                        outlier_idx, frequencies[outlier_idx]))
-            else:
-                outliers = False
-
-        # load stan model
-        if model_str is None:
-            model, model_str = self._get_stan_model(nonneg, outliers, False, None, fitY, SA)
-        else:
-            model = load_pickle(os.path.join(script_dir, 'stan_model_files', model_str))
-        self.stan_model_name = model_str
-        model_type = model_str.split('_')[0]
-        if model_type == 'Series-Parallel' and nonneg == False:
-            warnings.warn('For mixed series-parallel models, it is highly recommended to set nonnneg_drt=True')
-
-        # prepare data for stan model
-        dat = self._prep_stan_data(frequencies, Z_scaled, part, model_type, dist_mat, outliers, sigma_min,
-                                   mode='optimize',
-                                   inductance_scale=inductance_scale, outlier_lambda=outlier_lambda,
-                                   fitY=fitY, SA=SA, SASY=SASY)
-
-        # add user-supplied stan inputs
-        dat.update(add_stan_data)
-
-        if outliers:
-            # outlier models have been updated to use N instead of 2*N
-            # other models will be updated later
-            dat['N'] = len(frequencies)
-        self._stan_input = dat.copy()
-
-        # optimize posterior
-        self._opt_result = model.optimizing(dat, iter=max_iter, seed=random_seed, init=init)
-
-        # extract coefficients
-        self.distribution_fits = {}
-        self.error_fit = {}
-        if model_type in ['Series', 'Parallel']:
-            dist_name = [k for k, v in self.distributions.items() if v['dist_type'] == model_type.lower()][0]
-            dist_type = self.distributions[dist_name]['dist_type']
-            self.distribution_fits[dist_name] = {'coef': self._rescale_coef(self._opt_result['x'], dist_type)}
-            if fitY:
-                self.R_inf = 0
-                self.inductance = 0
-            else:
-                self.R_inf = self._rescale_coef(self._opt_result['Rinf'], 'series')
-                self.inductance = self._rescale_coef(self._opt_result['induc'], 'series')
-        elif model_type == 'Series-Parallel':
-            for dist_name, dist_info in self.distributions.items():
-                if dist_info['dist_type'] == 'series':
-                    self.distribution_fits[dist_name] = {
-                        'coef': self._rescale_coef(self._opt_result['xs'], dist_info['dist_type'])}
-                elif dist_info['dist_type'] == 'parallel':
-                    self.distribution_fits[dist_name] = {
-                        'coef': self._rescale_coef(self._opt_result['xp'], dist_info['dist_type'])}
-            self.R_inf = self._rescale_coef(self._opt_result['Rinf'], 'series')
-            self.inductance = self._rescale_coef(self._opt_result['induc'], 'series')
-        elif model_type == 'Series-2Parallel':
-            for dist_name, dist_info in self.distributions.items():
-                if dist_info['dist_type'] == 'series':
-                    self.distribution_fits[dist_name] = {
-                        'coef': self._rescale_coef(self._opt_result['xs'], dist_info['dist_type'])}
-                elif dist_info['dist_type'] == 'parallel':
-                    order = dist_info['order']
-                    self.distribution_fits[dist_name] = {
-                        'coef': self._rescale_coef(self._opt_result[f'xp{order}'], dist_info['dist_type'])}
-            self.R_inf = self._rescale_coef(self._opt_result['Rinf'], 'series')
-            self.inductance = self._rescale_coef(self._opt_result['induc'], 'series')
-
-        elif model_type == 'MultiDist':
-            """Placeholder"""
-            for dist_name, dist_info in self.distributions.items():
-                if dist_info['kernel'] == 'DRT':
-                    self.distribution_fits[dist_name] = {
-                        'coef': self._rescale_coef(self._opt_result['xs'], dist_info['dist_type'])}
-                elif dist_info['kernel'] == 'DDT':
-                    self.distribution_fits[dist_name] = {
-                        'coef': self._rescale_coef(self._opt_result['xp'], dist_info['dist_type'])}
-            self.R_inf = self._rescale_coef(self._opt_result['Rinf'], 'series')
-            self.inductance = self._rescale_coef(self._opt_result['induc'], 'series')
-
-        # store error structure parameters
-        # scaled parameters
-        self.error_fit['sigma_min'] = self._rescale_coef(sigma_min, 'series')
-        for param in ['sigma_tot', 'sigma_res']:
-            self.error_fit[param] = self._rescale_coef(self._opt_result[param], 'series')
-        # unscaled parameters
-        for param in ['alpha_prop', 'alpha_re', 'alpha_im']:
-            self.error_fit[param] = self._opt_result[param]
-        # outlier contribution
-        if outliers == True:
-            self.error_fit['sigma_out'] = self._rescale_coef(self._opt_result['sigma_out'], 'series')
-
-        self.fit_type = 'map'
 
         # check if outliers were missed
         if outliers == False and check_outliers:
@@ -1747,189 +1561,6 @@ class Inverter:
             self.error_fit['sigma_out'] = self._rescale_coef(self._opt_result['sigma_out'], 'series')
 
         self.fit_type = 'map-drift'
-
-    def bayes_fit(self, frequencies, Z, part='both', scale_Z=True, init_from_ridge=False, nonneg=False,
-                  outliers=False, check_outliers=True,
-                  model_str=None, add_stan_data={},
-                  sigma_min=0.002,
-                  warmup=200, sample=200, chains=2, random_seed=1234, inductance_scale=1, outlier_lambda=10,
-                  ridge_kw={},
-                  fitY=False, SA=False, SASY=False):
-        """
-		Obtain an estimate of the posterior distribution of the defined physical distributions (and all model parameters).
-
-		Parameters:
-		-----------
-		frequencies: array
-			Measured frequencies
-		Z: complex array
-			Measured (complex) impedance values. Must have same length as frequencies
-		part: str, optional (default: 'both')
-			Which part of the impedance data to fit. Options: 'both', 'real', 'imag'
-		scale_Z: bool, optional (default: True)
-			If True, scale impedance by the factor sqrt(N)/std(|Z|) to normalize for magnitude and sample size
-		init_from_ridge: bool, optional (default: False)
-			If True, use the hyperparametric ridge solution to initialize the Bayesian fit.
-			Only valid for single-distribution fits
-		nonneg: bool, optional (default: False)
-			If True, constrain the DRT to non-negative values
-		outliers: bool or str, optional (default: False)
-			If True, use outlier-robust error model.
-			If 'auto', check for likely outliers and automatically determine whether to use outlier model.
-			If False, use regular error model.
-			Set to True if you know your data contains outliers, set to False if you know it doesn't, or
-			set to 'auto' to let the system make the determination (this is especially useful for batch fits
-			in which some spectra contain outliers and others don't).
-		sigma_min: float, optional (default: 0.002)
-			Impedance error floor. This is necessary to avoid sampling/optimization errors.
-			Values smaller than the default (0.002) may enable slightly closer fits of very clean data,
-			but may also result in sampling/optimization errors that yield unexpected results.
-		warmup: int, optional (default: 200)
-			Number of warmup or burn-in samples to draw. These samples will not contribute to the
-			returned posterior distribution
-		sample: int, optional (default: 200)
-			Number of samples to draw after warm-up. These samples constitute the estimate of the
-			posterior distribution. The total number of samples will be sample*chains
-		chains: int, optional (default: 2)
-			Number of chains to sample in parallel
-		random_seed: int, optional (default: 1234)
-			Random seed for sampler
-		inductance_scale: float, optional (default: 1)
-			Scale (std of normal prior) of the inductance. Lower values will constrain the inductance,
-			which may be helpful if the estimated inductance is anomalously large (this may occur if your
-			measured impedance data does not extend to high frequencies, i.e. 1e5-1e6 Hz)
-		outlier_lambda: float, optional (default: 10)
-			Lambda parameter (inverse scale) of the exponential prior on the outlier error contribution.
-			Smaller values will make it easier for points to be flagged as outliers
-		ridge_kw: dict, optional (default: {})
-			Keyword arguments to pass to ridge_fit if init_from_ridge==True.
-		"""
-        # perform scaling and weighting and get A and B matrices
-        frequencies, Z_scaled, WZ_re, WZ_im, W_re, W_im, dist_mat = self._prep_matrices(frequencies, Z, part,
-                                                                                        weights=None, dZ=False,
-                                                                                        scale_Z=scale_Z,
-                                                                                        penalty='discrete',
-                                                                                        fit_type='bayes')
-
-        # get initial fit
-        if init_from_ridge:
-            if len(self.distributions) > 1:
-                raise ValueError('Ridge initialization can only be performed for single-distribution fits')
-            else:
-                init = self._get_init_from_ridge(frequencies, Z, nonneg=nonneg, outliers=outliers,
-                                                 inductance_scale=inductance_scale, ridge_kw=ridge_kw)
-                self._init_params = init()
-        else:
-            init = 'random'
-
-        # check for outliers. Use more stringent threshold to avoid false positives
-        if outliers == 'auto':
-            # If initial ridge fit performed, use existing ridge fit. Otherwise perform new ridge fit
-            if init_from_ridge:
-                use_existing_fit = True
-            else:
-                use_existing_fit = False
-            outlier_idx = self.check_outliers(frequencies, Z, threshold=4, use_existing_fit=use_existing_fit,
-                                              **ridge_kw)
-            if len(outlier_idx) > 0:
-                outliers = True
-                warnings.warn(
-                    'Identified likely outliers at indices {}, f={} Hz. An outlier-robust error model will be used. To disable this behavior, pass outliers=False.'.format(
-                        outlier_idx, frequencies[outlier_idx]))
-            else:
-                outliers = False
-
-        # load stan model
-        if model_str is None:
-            model, model_str = self._get_stan_model(nonneg, outliers, False, None, fitY, SA)
-        else:
-            model = load_pickle(os.path.join(script_dir, 'stan_model_files', model_str))
-        self.stan_model_name = model_str
-        model_type = model_str.split('_')[0]
-        if model_type == 'Series-Parallel' and nonneg == False:
-            warnings.warn('For mixed series-parallel models, it is highly recommended to set nonnneg_drt=True')
-
-        # prepare data for stan model
-        dat = self._prep_stan_data(frequencies, Z_scaled, part, model_type, dist_mat, outliers, sigma_min,
-                                   mode='sample',
-                                   inductance_scale=inductance_scale, outlier_lambda=outlier_lambda,
-                                   fitY=fitY, SA=SA, SASY=SASY)
-
-        if outliers:
-            # outlier models have been updated to use N=len(freq) instead of N=2*len(freq)
-            # other models will be updated later
-            dat['N'] = len(frequencies)
-
-        # add user-supplied stan inputs
-        dat.update(add_stan_data)
-
-        self._stan_input = dat.copy()
-
-        # sample from posterior
-        self._sample_result = model.sampling(dat, warmup=warmup, iter=warmup + sample, chains=chains, seed=random_seed,
-                                             init=init,
-                                             control={'adapt_delta': 0.9, 'adapt_t0': 10})
-
-        # extract coefficients
-        self.distribution_fits = {}
-        self.error_fit = {}
-        if model_type in ['Series', 'Parallel']:
-            dist_name = [k for k, v in self.distributions.items() if v['dist_type'] == model_type.lower()][0]
-            dist_type = self.distributions[dist_name]['dist_type']
-            self.distribution_fits[dist_name] = {
-                'coef': self._rescale_coef(np.mean(self._sample_result['x'], axis=0), dist_type)}
-            if fitY:
-                self.R_inf = 0
-                self.inductance = 0
-            else:
-                self.R_inf = self._rescale_coef(np.mean(self._sample_result['Rinf']), 'series')
-                self.inductance = self._rescale_coef(np.mean(self._sample_result['induc']), 'series')
-        elif model_type == 'Series-Parallel':
-            for dist_name, dist_info in self.distributions.items():
-                if dist_info['dist_type'] == 'series':
-                    self.distribution_fits[dist_name] = {
-                        'coef': self._rescale_coef(np.mean(self._sample_result['xs'], axis=0), dist_info['dist_type'])}
-                elif dist_info['dist_type'] == 'parallel':
-                    self.distribution_fits[dist_name] = {
-                        'coef': self._rescale_coef(np.mean(self._sample_result['xp'], axis=0), dist_info['dist_type'])}
-            self.R_inf = self._rescale_coef(np.mean(self._sample_result['Rinf']), 'series')
-            self.inductance = self._rescale_coef(np.mean(self._sample_result['induc']), 'series')
-        elif model_type == 'Series-2Parallel':
-            for dist_name, dist_info in self.distributions.items():
-                if dist_info['dist_type'] == 'series':
-                    self.distribution_fits[dist_name] = {
-                        'coef': self._rescale_coef(np.mean(self._sample_result['xs'], axis=0), dist_info['dist_type'])}
-                elif dist_info['dist_type'] == 'parallel':
-                    order = dist_info['order']
-                    self.distribution_fits[dist_name] = {
-                        'coef': self._rescale_coef(np.mean(self._sample_result[f'xp{order}'], axis=0),
-                                                   dist_info['dist_type'])}
-            self.R_inf = self._rescale_coef(np.mean(self._sample_result['Rinf']), 'series')
-            self.inductance = self._rescale_coef(np.mean(self._sample_result['induc']), 'series')
-
-        # store error structure parameters
-        # vector parameter
-        self.error_fit['sigma_tot'] = self._rescale_coef(np.mean(self._sample_result['sigma_tot'], axis=0), 'series')
-        # scalar parameters - scaled
-        self.error_fit['sigma_min'] = self._rescale_coef(sigma_min, 'series')
-        self.error_fit['sigma_res'] = self._rescale_coef(np.mean(self._sample_result['sigma_res']), 'series')
-        # scalar parameters - not scaled
-        for param in ['alpha_prop', 'alpha_re', 'alpha_im']:
-            self.error_fit[param] = np.mean(self._sample_result[param])
-        # outlier contribution
-        if outliers:
-            self.error_fit['sigma_out'] = self._rescale_coef(np.mean(self._sample_result['sigma_out'], axis=0),
-                                                             'series')
-
-        self.fit_type = 'bayes'
-
-        # check if outliers were missed
-        if outliers == False and check_outliers:
-            outlier_idx = self.check_outliers(frequencies, Z, threshold=3.5, use_existing_fit=True)
-            if len(outlier_idx) > 0:
-                warnings.warn(
-                    'Possible outliers were identified at indices {}, f={} Hz. Check the residuals and consider re-running with outliers=True'.format(
-                        outlier_idx, frequencies[outlier_idx]))
 
     def _get_stan_model(self, nonneg, outliers, drift, drift_model, fitY, SA):
         """Get the appropriate Stan model for the distributions. Called by map_fit and bayes_fit methods
@@ -2553,9 +2184,10 @@ class Inverter:
             temp_dist = deepcopy(self.distributions)
             # set tau and epsilon
             if info.get('basis_freq', self.basis_freq) is None:
+                # If basis_freq not specified, go one decade beyond measured frequency range in each direction
                 # by default, use 10 ppd for tau spacing regardless of input frequency spacing
-                tmin = np.ceil(np.log10(1 / (2 * np.pi * np.max(frequencies))))
-                tmax = np.floor(np.log10(1 / (2 * np.pi * np.min(frequencies))))
+                tmin = np.log10(1 / (2 * np.pi * np.max(frequencies))) - 1
+                tmax = np.log10(1 / (2 * np.pi * np.min(frequencies))) + 1
                 num_decades = tmax - tmin
                 tau = np.logspace(tmin, tmax, int(10 * num_decades + 1))
             else:
@@ -3777,19 +3409,59 @@ class Inverter:
     # ===============================================
     # Peak fitting
     # ===============================================
-    def fit_HN_peaks(self, distribution=None, eval_tau=None, percentile=None, time=None,
-                     check_shoulders=True, weights=None, prom_rthresh=0.001, R_rthresh=0.005,
-                     check_chi_sq=False, chi_sq_thresh=0.5, chi_sq_delta=0.3,
-                     fit_data=False, frequencies=None, Z=None, Z_weights=None, lambda_x=10):
+    def fit_peaks(self, distribution=None, eval_tau=None, percentile=None, time=None,
+                  check_shoulders=True, weights=None, prom_rthresh=0.001, R_rthresh=0.005,
+                  l1_penalty=0, l2_penalty=0.01,
+                  check_chi_sq=False, chi_sq_thresh=0.5, chi_sq_delta=0.3,
+                  fit_data=False, frequencies=None, Z=None, Z_weights=None, lambda_x=10):
         """
-		Fit Havriliak-Negami (HN) relaxations to the recovered distribution.
+        Fit Havriliak-Negami (HN) peaks to the recovered distribution.
 		Uses a peak detection algorithm to determine the number of peaks,
-		then optimizes the HN model parameters to best fit the distribution
+		then optimizes the HN peak parameters to best fit the distribution
 		and/or impedance data.
 
-		Parameters:
-		-----------
-		"""
+        Parameters
+        ----------
+        distribution : str, optional (default: None)
+            Name of distribution to fit. If None, use first distribution in self.distributions
+        eval_tau : array, optional (default: None)
+            tau grid over which to fit distribution. If None, go one decade beyond basis tau in each direction
+        percentile : float, optional (default: None)
+            Percentile of credible interval to fit. Only applies to HMC fits (mode='sample')
+        time : float, optional (default: None)
+            Time at which to evaluate distribution. Only applies to drift fits
+        check_shoulders : bool, optional (default: True)
+            If True, identify shoulder peaks by searching for peaks in the first derivative of the distribution.
+        weights : array, optional (default: None)
+            Weights to use for fitting peaks. Must match length of eval_tau
+        prom_rthresh : float, optional (default: 0.001)
+            Relative prominence threshold for identifying peaks using scipy.signal.fined_peaks.
+            Threshold is fraction of the largest peak.
+        R_rthresh : float, optional (default: 0.005)
+            Relative resistance threshold for keeping fitted peaks.
+            Threshold is fraction of polarization resistance.
+        l1_penalty : float, optional (default: 0)
+            L1 penalty strength to apply to peak resistance values.
+        l2_penalty : float, optional (default: 0.01)
+            L2 penalty strength to apply to peak resistance values.
+        check_chi_sq : bool, optional (default: False)
+            If True, check the chi square value after fitting and search for additional peaks if chi_sq > chi_sq_thresh.
+        chi_sq_thresh : float, optional (default: 0.5)
+            chi square threshold for searching for additional peaks.
+        chi_sq_delta : float, optional (default: 0.3)
+            Minimum improvement in chi square required to keep additional peaks identified when check_chi_sq=True.
+        fit_data : bool, optional (default: False)
+            If True, fit peaks both to distribution and to impedance data
+        frequencies : array, optional (default: None)
+            Array of measured frequencies. Only used when fit_data=True.
+        Z : array, optional (default: None)
+            Array of impedance values. Only used when fit_data=True.
+        Z_weights : array or str, optional (default: None)
+            Array of weights or name of weighting scheme to use for fitting impedance. Only used when fit_data=True.
+        lambda_x :
+            Magnitude of penalty for deviations from parameter values obtained by fitting peaks directly to the
+            distribution. Only used when fit_data=True.
+        """
         # If no distribution specified, use first distribution
         if distribution is None:
             distribution = list(self.distributions.keys())[0]
@@ -3800,7 +3472,6 @@ class Inverter:
             tmax = np.log10(np.max(basis_tau)) + 1
             num_decades = tmax - tmin
             eval_tau = np.logspace(tmin, tmax, int(10 * num_decades + 1))
-        # eval_tau = self.distributions[distribution]['tau']
 
         F = self.predict_distribution(distribution, eval_tau, percentile, time)
 
@@ -3810,10 +3481,13 @@ class Inverter:
         else:
             nonneg = False
 
+        Rp = self.predict_Rp()
+
         # Fit HN model to distribution
-        x = pf.fit_peaks(eval_tau, F, weights=weights, nonneg=nonneg, check_shoulders=check_shoulders,
-                         prom_rthresh=prom_rthresh, R_rthresh=R_rthresh,
-                         check_chi_sq=check_chi_sq, chi_sq_thresh=chi_sq_thresh, chi_sq_delta=chi_sq_delta)
+        x = pf.fit_peaks(eval_tau, F, Rp, weights=weights, nonneg=nonneg, check_shoulders=check_shoulders,
+                         prom_rthresh=prom_rthresh, R_rthresh=R_rthresh, check_chi_sq=check_chi_sq,
+                         chi_sq_thresh=chi_sq_thresh, chi_sq_delta=chi_sq_delta,
+                         l1_penalty=l1_penalty, l2_penalty=l2_penalty)
 
         # Re-fit HN model to data
         if fit_data:
@@ -3824,37 +3498,60 @@ class Inverter:
                                  weights=Z_weights, lambda_x=lambda_x)
             x = result['x']
 
-        self.distribution_fits[distribution]['HN_params'] = x
-        # Calculate and store chi_sq for convenience
-        self.distribution_fits[distribution]['HN_chi_sq'] = self.score_HN_fit(eval_tau=eval_tau,
-                                                                              distribution=distribution,
-                                                                              weights=weights, percentile=percentile,
-                                                                              time=time)
+        # sort by time constant
+        t0 = np.exp(x[1::4])
+        sort_idx = np.argsort(t0)
+        x_sorted = np.empty(len(x))
+        for i, idx in enumerate(sort_idx):
+            x_sorted[4 * i: 4 * (i + 1)] = x[4 * idx: 4 * (idx + 1)]
 
-    def fit_HN_constrained(self, distribution=None, eval_tau=None, percentile=None, time=None,
-                           tau0_guess=None, sigma_lntau=5, lntau_uncertainty=3, weights=None):
+        self.distribution_fits[distribution]['peak_params'] = x_sorted
+
+        # Calculate and store chi_sq for convenience
+        self.distribution_fits[distribution]['peak_chi_sq'] = self.score_peak_fit(eval_tau=eval_tau,
+                                                                                  distribution=distribution,
+                                                                                  weights=weights,
+                                                                                  percentile=percentile,
+                                                                                  time=time)
+
+    def fit_peaks_constrained(self, tau0_guess, distribution=None, eval_tau=None, percentile=None, time=None,
+                              sigma_lntau=5, lntau_uncertainty=3, weights=None, l2_penalty=0.01):
         # If no distribution specified, use first distribution
         if distribution is None:
             distribution = list(self.distributions.keys())[0]
-        # If eval_tau not given, use basis tau
+        # If eval_tau not given, go one decade beyond basis tau in each direction to capture all peaks
         if eval_tau is None:
-            eval_tau = self.distributions[distribution]['tau']
+            basis_tau = self.distributions[distribution]['tau']
+            tmin = np.log10(np.min(basis_tau)) - 1
+            tmax = np.log10(np.max(basis_tau)) + 1
+            num_decades = tmax - tmin
+            eval_tau = np.logspace(tmin, tmax, int(10 * num_decades + 1))
 
         F = self.predict_distribution(distribution, eval_tau, percentile, time)
 
+        # Determine whether negative peaks need to be fitted
+        if np.min(F) >= 0:
+            nonneg = True
+        else:
+            nonneg = False
+
+        Rp = self.predict_Rp()
+
         # Fit HN model to distribution
-        result = pf.constrained_peak_fit(eval_tau, F, tau0_guess, lntau_uncertainty, sigma_lntau, weights)
-        self.distribution_fits[distribution]['HN_params'] = result['x']
+        result = pf.constrained_peak_fit(eval_tau, F, tau0_guess, Rp, nonneg, lntau_uncertainty, sigma_lntau, weights,
+                                         l2_penalty)
+        self.distribution_fits[distribution]['peak_params'] = result['x']
 
         # Calculate and store chi_sq for convenience
-        self.distribution_fits[distribution]['HN_chi_sq'] = self.score_HN_fit(eval_tau=eval_tau,
-                                                                              distribution=distribution,
-                                                                              weights=weights, percentile=percentile,
-                                                                              time=time)
+        self.distribution_fits[distribution]['peak_chi_sq'] = self.score_peak_fit(eval_tau=eval_tau,
+                                                                                  distribution=distribution,
+                                                                                  weights=weights,
+                                                                                  percentile=percentile,
+                                                                                  time=time)
 
-    def predict_HN_distribution(self, eval_tau=None, distribution=None):
+    def predict_peak_distribution(self, eval_tau=None, distribution=None, peak_index=None):
         """
-		Predict distribution from HN model fit
+		Predict distribution from peak fit
 
 		Parameters:
 		-----------
@@ -3864,19 +3561,33 @@ class Inverter:
 		distribution: str, optional (default: None)
 			Name of distribution to predict.
 			If None, use first distribution
+		peak_index : int, optional (default: False)
+		    Index of peak to evaluate. If None, sum contributions of all peaks.
 		"""
         # If no distribution specified, use first distribution
         if distribution is None:
             distribution = list(self.distributions.keys())[0]
-        # If eval_tau not given, use basis tau
-        if eval_tau is None:
-            eval_tau = self.distributions[distribution]['tau']
 
-        F = pf.evaluate_fit_distribution(self.distribution_fits[distribution]['HN_params'], eval_tau)
+        # If eval_tau not given, go one decade beyond basis tau in each direction to capture all peaks
+        if eval_tau is None:
+            basis_tau = self.distributions[distribution]['tau']
+            tmin = np.log10(np.min(basis_tau)) - 1
+            tmax = np.log10(np.max(basis_tau)) + 1
+            num_decades = tmax - tmin
+            eval_tau = np.logspace(tmin, tmax, int(10 * num_decades + 1))
+
+        if peak_index is not None:
+            # Get parameters for specified peaks
+            peak_params = self.distribution_fits[distribution]['peak_params'][4 * peak_index:4 * peak_index + 4]
+        else:
+            # Get parameters for all peaks
+            peak_params = self.distribution_fits[distribution]['peak_params']
+
+        F = pf.evaluate_fit_distribution(peak_params, eval_tau)
 
         return F
 
-    def predict_HN_Z(self, frequencies, distribution=None):
+    def predict_peak_Z(self, frequencies, distribution=None):
         """
 		Predict impedance from HN model fit
 
@@ -3892,19 +3603,32 @@ class Inverter:
         if distribution is None:
             distribution = list(self.distributions.keys())[0]
 
-        Z = pf.evaluate_fit_impedance(self.distribution_fits[distribution]['HN_params'], frequencies, self.R_inf,
+        Z = pf.evaluate_fit_impedance(self.distribution_fits[distribution]['peak_params'], frequencies, self.R_inf,
                                       self.inductance)
 
         return Z
 
-    def extract_HN_info(self, distribution=None, sort=True):
-
+    def extract_peak_info(self, distribution=None, sort=True):
+        """
+        Extract dict of peak parameters.
+        Parameters
+        ----------
+        distribution : str, optional (default: None)
+            Name of distribution for which to extract peak parameters.
+            If None, use first distribution in self.distributions
+        sort : bool, optional (default: True)
+            If True, sort peaks by ascending time constant
+        Returns
+        -------
+        info : dict
+            Dict of peak parameters
+        """
         # If no distribution specified, use first distribution
         if distribution is None:
             distribution = list(self.distributions.keys())[0]
 
         # get parameters and parse
-        params = self.distribution_fits[distribution]['HN_params']
+        params = self.distribution_fits[distribution]['peak_params']
         num_peaks = int(len(params) / 4)
 
         R = params[::4]
@@ -3922,7 +3646,7 @@ class Inverter:
 
         # make dict for easy reading
         info = {'num_peaks': num_peaks,
-                'chi_sq': self.distribution_fits[distribution]['HN_chi_sq'],
+                'chi_sq': self.distribution_fits[distribution]['peak_chi_sq'],
                 'R': R,
                 'tau_0': t0,
                 'alpha': alpha,
@@ -3931,7 +3655,7 @@ class Inverter:
 
         return info
 
-    def score_HN_fit(self, eval_tau=None, distribution=None, weights=None, percentile=None, time=None):
+    def score_peak_fit(self, eval_tau=None, distribution=None, weights=None, percentile=None, time=None):
         # If no distribution specified, use first distribution
         if distribution is None:
             distribution = list(self.distributions.keys())[0]
@@ -3942,7 +3666,7 @@ class Inverter:
 
         # Get distribution and HN fit
         F = self.predict_distribution(distribution, eval_tau, percentile, time)
-        F_fit = pf.evaluate_fit_distribution(self.distribution_fits[distribution]['HN_params'], eval_tau)
+        F_fit = pf.evaluate_fit_distribution(self.distribution_fits[distribution]['peak_params'], eval_tau)
 
         # If no weights specified, use hybrid weighting scheme
         if weights is None:
@@ -3953,6 +3677,293 @@ class Inverter:
         chi_sq = np.sum((resid * weights) ** 2)
 
         return chi_sq
+
+    # ===============================================
+    # Plotting
+    # ===============================================
+    def plot_distribution(self, ax=None, distribution=None, tau_plot=None, plot_bounds=True, plot_ci=True,
+                          label='', ci_label='', unit_scale='auto', freq_axis=True, area=None, normalize=False,
+                          predict_kw={}, **kw):
+        """
+        Plot the specified distribution as a function of tau.
+
+        Parameters
+        ----------
+        ax : matplotlib axis
+            Axis on which to plot
+        distribution : str, optional (default: None)
+            Name of distribution to plot. If None, first distribution in self.distributions will be used
+        tau_plot : array, optonal (default: None)
+            Time constant grid over which to evaluate the distribution.
+            If None, a grid extending one decade beyond the basis time constants in each direction will be used.
+        plot_bounds : bool, optional (default: True)
+            If True, indicate frequency bounds of experimental data with vertical lines.
+            Requires that DataFrame of experimental data be passed for df argument
+        plot_ci : bool, optional (default: True)
+            If True, plot the 95% credible interval of the distribution (if available).
+        label : str, optional (default: '')
+            Label for matplotlib
+        unit_scale : str, optional (default: 'auto')
+            Scaling unit prefix. If 'auto', determine from data.
+            Options are 'mu', 'm', '', 'k', 'M', 'G'
+        freq_axis : bool, optional (default: True)
+            If True, add a secondary x-axis to display frequency
+        area : float, optional (default: None)
+            Active area. If provided, plot the area-normalized distribution
+        normalize : bool, optional (default: False)
+            If True, normalize the distribution such that the integrated area is 1
+        predict_kw : dict, optional (default: {})
+            Keyword args to pass to Inverter predict_distribution() method
+        kw : keyword args, optional
+            Keyword args to pass to maplotlib.pyplot.plot
+        Returns
+        -------
+        ax : matplotlib axis
+            Axis on which distribution is plotted
+        """
+        # Construct dataframe from fitted data
+        df = fl.construct_eis_df(self.f_train, self.Z_train)
+
+        ax = bp.plot_distribution(df, self, ax, distribution, tau_plot, plot_bounds, plot_ci,
+                                  label, ci_label, unit_scale, freq_axis, area, normalize,
+                                  predict_kw, **kw)
+
+        return ax
+
+    def plot_fit(self, axes=None, plot_type='all', bode_cols=['Zreal', 'Zimag'], plot_data=True, color='k',
+                 f_pred=None, label='', data_label='', unit_scale='auto', area=None, predict_kw={}, data_kw={},
+                 **kw):
+        """
+        Plot fit of impedance data.
+        Parameters
+        ----------
+        df : pandas DataFrame
+            Dataframe of fitted impedance data
+        inv : Inverter instance
+            Fitted Inverter instance
+        axes : array, optional (default: None)
+            Array or list of axes on which to plot. If None, axes will be created
+        plot_type : str, optional (default: 'all')
+            Type of plot(s) to create. Options:
+                'all': Nyquist and Bode plots
+                'nyquist': Nyquist plot only
+                'bode': Bode plots only
+        bode_cols : list, optional (default: ['Zmod', 'Zphz'])
+            List of data columns to plot in Bode plots. Options: 'Zreal', 'Zimag', 'Zmod', 'Zphz'
+            Only used if plot_type in ('all', 'bode')
+        plot_data : bool, optional (default: True)
+            If True, scatter data and plot fit line. If False, plot fit line only.
+        color : str, optional (default: 'k')
+            Color for fit line
+        f_pred : array, optional (default: None)
+            Frequencies for which to plot fit line. If None, use data frequencies
+        label : str, optional (default: '')
+            Label for fit line
+        data_label : str, optional (default: '')
+            Label for data points
+        unit_scale : str, optional (default: 'auto')
+            Scaling unit prefix. If 'auto', determine from data.
+            Options are 'mu', 'm', '', 'k', 'M', 'G'
+        area : float, optional (default: None)
+            Active area in cm^2. If specified, plot area-normalized impedance.
+        predict_kw : dict, optional (default: {})
+            Keywords to pass to self.predict_Z
+        data_kw : dict, optional (default: {})
+            Keywords to pass to matplotlib.pyplot.scatter when plotting data points
+        kw : dict, optional (default: {})
+            Keywords to pass to matplotlib.pyplot.plot when plotting fit line
+        Returns
+        -------
+        axes : array
+            Axes on which fit is plotted
+        """
+        # Construct dataframe from fitted data
+        df = fl.construct_eis_df(self.f_train, self.Z_train)
+
+        axes = bp.plot_fit(df, self, axes, plot_type, bode_cols, plot_data, color, f_pred, label, data_label,
+                           unit_scale, area,
+                           predict_kw, data_kw, **kw)
+
+        return axes
+
+    def plot_residuals(self, axes=None, unit_scale='auto', plot_ci=True, predict_kw={}):
+        """
+        Plot the real and imaginary impedance residuals
+
+        Parameters
+        ----------
+        df : pandas DataFrame
+            Dataframe of fitted impedance data
+        inv : Inverter instance
+            Fitted Inverter instance
+        axes : array, optional (default: None)
+            Array or list of axes on which to plot. If None, axes will be created
+        unit_scale : str, optional (default: 'auto')
+            Scaling unit prefix. If 'auto', determine from data.
+            Options are 'mu', 'm', '', 'k', 'M', 'G'
+        plot_ci : bool, optional (default: True)
+            If True, plot the 99.7% credible interval (+/- 3 sigma) of residuals (if available).
+        predict_kw : dict, optional (default: {})
+            Keywords to pass to self.predict_Z
+        Returns
+        -------
+        axes : array
+            Axes on which residuals are plotted
+        """
+        # Construct dataframe from fitted data
+        df = fl.construct_eis_df(self.f_train, self.Z_train)
+
+        axes = bp.plot_residuals(df, self, axes, unit_scale, plot_ci, predict_kw)
+
+        return axes
+
+    def plot_full_results(self, bode_cols=['Zreal', 'Zimag'], plot_data=True, color='k', axes=None,
+                          tau_plot=None, f_pred=None, plot_ci=True, plot_drt_ci=True, predict_kw={}):
+        """
+        Plot the impedance fit, fitted distribution, and impedance residuals.
+
+        Parameters
+        ----------
+        df : pandas DataFrame
+            Dataframe of fitted impedance data
+        inv : Inverter instance
+            Fitted Inverter instance
+        axes : array, optional (default: None)
+            Array or list of axes on which to plot. If None, axes will be created
+        bode_cols : list, optional (default: ['Zmod', 'Zphz'])
+            List of data columns to plot in Bode plots. Options: 'Zreal', 'Zimag', 'Zmod', 'Zphz'
+            Only used if plot_type in ('all', 'bode')
+        plot_data : bool, optional (default: True)
+            If True, scatter data and plot fit line. If False, plot fit line only.
+        color : str, optional (default: 'k')
+            Color for fit line
+        tau_plot : array, optonal (default: None)
+            Time constant grid over which to evaluate the distribution.
+            If None, a grid extending one decade beyond the basis time constants in each direction will be used.
+        f_pred : array, optional (default: None)
+            Frequencies for which to plot fit line. If None, use data frequencies
+        plot_ci : bool, optional (default: True)
+            If True, plot the 99.7% credible interval (+/- 3 sigma) of residuals (if available).
+        plot_drt_ci : bool, optional (default: True)
+            If True, plot the 95% credible interval of the distribution (if available).
+        predict_kw : dict, optional (default: {})
+            Keywords to pass to self.predict_Z
+
+        Returns
+        -------
+        axes : array
+            Axes on which results are plotted
+        """
+        # Construct dataframe from fitted data
+        df = fl.construct_eis_df(self.f_train, self.Z_train)
+
+        axes = bp.plot_full_results(df, self, axes, bode_cols, plot_data, color, tau_plot, f_pred, plot_ci, plot_drt_ci,
+                                    predict_kw)
+
+        return axes
+
+    def plot_peak_fit(self, ax=None, distribution=None, tau_plot=None, plot_bounds=False, plot_ci=False,
+                      plot_distribution=True, plot_individual_peaks=False,
+                      peak_fit_label='Peak fit', distribution_label='$\gamma$', ci_label='95% CI',
+                      unit_scale='auto', freq_axis=True, area=None, normalize=False,
+                      predict_kw={}, distribution_kw={}, **kw):
+        """
+        Plot Havriliak-Negami peak fit of the distribution. Only valid if fit_peaks has been executed.
+
+        Parameters
+        ----------
+        ax : matplotlib axis, optional (default: None)
+            Axis on which to plat
+        distribution : str, optional (default: None)
+            Name of distribution to plot. If None, first distribution in self.distributions will be used
+        tau_plot : array, optonal (default: None)
+            Time constant grid over which to evaluate the distribution.
+            If None, a grid extending one decade beyond the basis time constants in each direction will be used.
+        plot_bounds : bool, optional (default: False)
+            If True, indicate frequency bounds of experimental data with vertical lines.
+            Requires that DataFrame of experimental data be passed for df argument
+        plot_ci : bool, optional (default: False)
+            If True, plot the 95% credible interval of the distribution (if available).
+        plot_distribution : bool, optional (default: True)
+            If True, plot the fitted distribution and the peak fit. If False, plot only the peak fit.
+        plot_individual_peaks : bool, optional (default: False)
+            If True, plot each peak as its own series. If False, plot the total peak fit.
+        peak_fit_label : str, optional (default: 'Peak fit')
+            Label for peak fit
+        distribution_label : str, optional (default: '$\gamma$'$)
+            Label for fitted distribution
+        ci_label : str, optional (default: '95% CI')
+            Label for credible interval of fitted distribution
+        unit_scale : str, optional (default: 'auto')
+            Scaling unit prefix. If 'auto', determine from data.
+            Options are 'mu', 'm', '', 'k', 'M', 'G'
+        freq_axis : bool, optional (default: True)
+            If True, add a secondary x-axis to display frequency
+        area : float, optional (default: None)
+            Active area. If provided, plot the area-normalized distribution
+        normalize : bool, optional (default: False)
+            If True, normalize the distribution such that the integrated area is 1
+        predict_kw : dict, optional (default: {})
+            Keyword args to pass to Inverter predict_distribution() method
+        distribution_kw : dict, optional (default: {})
+            Keyword args to pass to matplotlib.plot when plotting distribution
+        kw : keyword args, optional
+            Keyword args to pass to matplotlib.plot when plotting peak fit(s)
+
+        Returns
+        -------
+        ax : matplotlib axis
+            Axis on which distribution is plotted
+        """
+        # Construct dataframe from fitted data
+        df = fl.construct_eis_df(self.f_train, self.Z_train)
+
+        distribution_defaults = {'color': 'k'}
+        distribution_defaults.update(distribution_kw)
+
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(3.5, 2.75))
+
+        # If no distribution specified, use first distribution
+        if distribution is None:
+            distribution = list(self.distributions.keys())[0]
+
+        # If tau_plot not given, go one decade beyond basis tau in each direction
+        if tau_plot is None:
+            basis_tau = self.distributions[distribution]['tau']
+            tmin = np.log10(np.min(basis_tau)) - 1
+            tmax = np.log10(np.max(basis_tau)) + 1
+            num_decades = tmax - tmin
+            tau_plot = np.logspace(tmin, tmax, int(20 * num_decades + 1))
+
+        if not plot_distribution:
+            # Hide distribution
+            distribution_defaults['alpha'] = 0
+            distribution_label = ''
+
+        # Plot distribution
+        ax = self.plot_distribution(ax, distribution, tau_plot, plot_bounds, plot_ci,
+                                    distribution_label, ci_label, unit_scale, freq_axis, area, normalize,
+                                    predict_kw, **distribution_defaults)
+
+        # Plot peak fit
+        if unit_scale == 'auto':
+            scale_factor = get_scale_factor(df, area)
+        else:
+            scale_factor = get_factor_from_unit(unit_scale)
+        if plot_individual_peaks:
+            peak_info = self.extract_peak_info()
+            for i in range(peak_info['num_peaks']):
+                F_i = self.predict_peak_distribution(tau_plot, distribution, i)
+                ax.plot(tau_plot, F_i / scale_factor, **kw)
+        else:
+            F_peaks = self.predict_peak_distribution(tau_plot, distribution)
+            ax.plot(tau_plot, F_peaks / scale_factor, label=peak_fit_label, **kw)
+
+        if len(ax.get_legend_handles_labels()[0]) > 0:
+            ax.legend()
+
+        return ax
 
     # ===============================================
     # Methods for saving and loading fits
@@ -4069,9 +4080,12 @@ class Inverter:
     def get_epsilon(self):
         return self._epsilon
 
-    def set_epsilon(self, epsilon):
+    def set_epsilon(self, epsilon, override_distributions=False):
         self._epsilon = epsilon
         self._recalc_mat = True
+        if override_distributions:
+            for name in self.distributions.keys():
+                self.distributions[name]['epsilon'] = epsilon
         self.f_pred = None
 
     epsilon = property(get_epsilon, set_epsilon)
