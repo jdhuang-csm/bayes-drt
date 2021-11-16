@@ -4,9 +4,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-import bayes_drt.utils
 from . import file_load as fl
-from .utils import get_unit_scale
+from .utils import get_unit_scale, get_scale_factor, get_factor_from_unit
 
 
 # ---------------------------
@@ -110,23 +109,36 @@ def plot_jv(df, area=None, plot_pwr=True, ax=None, pwr_kw={'marker': 'o', 'mfc':
     return ax
 
 
-def plot_nyquist(df, area=None, ax=None, label='', plot_func='scatter', unit_scale='auto', eq_xy=True,
+def plot_nyquist(df, area=None, ax=None, label='', plot_func='scatter', unit_scale='auto', set_aspect_ratio=True,
                  **kw):
     """
-	Nyquist plot
+	Generate Nyquist plot.
 
-	Args:
-		df: dataframe of impedance data
-		area: cell area in cm2. If None, plot raw impedance
-		label: series label
-		plot_func: pyplot plotting function. Options: 'scatter', 'plot'
-		eq_xy: if True, ensure that scale of x and y axes is the same (i.e. xmax-xmin = ymax-ymin)
-		kw: kwargs for plot_func
+	Parameters
+	----------
+    df : pandas DataFrame
+        DataFrame of impedance data
+    area : float, optional (default: None)
+        Active area in cm^2. If provided, plot area-normalized impedance
+    ax : matplotlib axis, optional (default: None)
+        Axis on which to plot. If None, axis will be created.
+    label : str, optional (default: '')
+        Label for data
+    plot_func : str, optional (default: 'scatter')
+        Name of matplotlib.pyplot plotting function to use. Options: 'scatter', 'plot'
+    unit_scale: str, optional (default: 'auto')
+        Scaling unit prefix. If 'auto', determine from data.
+        Options are 'mu', 'm', '', 'k', 'M', 'G'
+    set_aspect_ratio : bool, optional (default: True)
+        If True, ensure that visual scale of x and y axes is the same.
+        If False, use matplotlib's default scaling.
+    kw:
+        Keywords to pass to matplotlib.pyplot.plot_func
 	"""
     df = df.copy()
 
     if ax is None:
-        fig, ax = plt.subplots()
+        fig, ax = plt.subplots(figsize=(3.5, 2.75))
 
     if area is not None:
         # if area given, convert to ASR
@@ -167,7 +179,7 @@ def plot_nyquist(df, area=None, ax=None, label='', plot_func='scatter', unit_sca
     if label != '':
         ax.legend()
 
-    if eq_xy:
+    if set_aspect_ratio:
         # make scale of x and y axes the same
         fig = ax.get_figure()
 
@@ -245,17 +257,32 @@ def plot_nyquist(df, area=None, ax=None, label='', plot_func='scatter', unit_sca
 def plot_bode(df, area=None, axes=None, label='', plot_func='scatter', cols=['Zmod', 'Zphz'], unit_scale='auto',
               invert_phase=True, invert_Zimag=True, **kw):
     """
-	Bode plot
+    Generate Bode plots.
 
-	Args:
-		df: dataframe of impedance data
-		area: active area in cm2. If None, plot raw impedance
-		label: series label
-		plot_func: pyplot plotting function. Options: 'scatter', 'plot'
-		cols: which columns to plot vs. frequency. Defaults to Zmod and Zphz
-		unit_scale: impedance scale. Options are 'auto', 'mu', 'm', '', 'k', 'M'
-		kw: kwargs for plot_func
-	"""
+    Parameters
+    ----------
+    df : pandas DataFrame
+        DataFrame of impedance data
+    area : float, optional (default: None)
+        Active area in cm^2. If provided, plot area-normalized impedance.
+    axes : array, optional (default: None)
+        List or array of axes on which to plot. If None, axes will be created.
+    label : str, optional (default: '')
+        Label for data
+    plot_func : str, optional (default: 'scatter')
+        Name of matplotlib.pyplot plotting function to use. Options: 'scatter', 'plot'
+    cols : list, optional (default: ['Zmod', 'Zphz'])
+        List of data columns to plot. Options: 'Zreal', 'Zimag', 'Zmod', 'Zphz'
+    unit_scale: str, optional (default: 'auto')
+        Scaling unit prefix. If 'auto', determine from data.
+        Options are 'mu', 'm', '', 'k', 'M', 'G'
+    invert_phase : bool, optional (default: True)
+        If True, plot negative phase
+    invert_Zimag : bool, optional (default: True)
+        If True, plot negative Zimag
+    kw:
+        Keywords to pass to matplotlib.pyplot.plot_func
+    """
     df = df.copy()
     # formatting for columns
     col_dict = {'Zmod': {'units': '$\Omega$', 'label': '$|Z|$', 'scale': 'log'},
@@ -359,21 +386,37 @@ def plot_bode(df, area=None, axes=None, label='', plot_func='scatter', cols=['Zm
 
 
 def plot_eis(df, plot_type='all', area=None, axes=None, label='', plot_func='scatter', unit_scale='auto',
-             bode_cols=['Zmod', 'Zphz'], eq_xy=True, **kw):
+             bode_cols=['Zmod', 'Zphz'], set_aspect_ratio=True, **kw):
     """
     Plot eis data in Nyquist and/or Bode plot(s)
     Parameters
     ----------
-    df:
-    plot_type
-    area
-    axes
-    label
-    plot_func
-    unit_scale
-    bode_cols
-    eq_xy
-    kw
+    df : pandas DataFrame
+        DataFrame of impedance data
+    plot_type : str, optional (default: 'all')
+        Type of plot(s) to create. Options:
+            'all': Nyquist and Bode plots
+            'nyquist': Nyquist plot only
+            'bode': Bode plots only
+    area : float, optional (default: None)
+        Active area in cm^2. If provided, plot area-normalized impedance
+    axes : array, optional (default: None)
+        Axes on which to plot. If None, axes will be created
+    label : str, optional (default: '')
+        Label for data
+    plot_func : str, optional (default: 'scatter')
+        Name of matplotlib.pyplot function to use. Options: 'scatter', 'plot'
+    unit_scale: str, optional (default: 'auto')
+        Scaling unit prefix. If 'auto', determine from data.
+        Options are 'mu', 'm', '', 'k', 'M', 'G'
+    bode_cols : list, optional (default: ['Zmod', 'Zphz'])
+        List of data columns to plot in Bode plots. Options: 'Zreal', 'Zimag', 'Zmod', 'Zphz'
+        Only used if plot_type in ('all', 'bode')
+    set_aspect_ratio : bool, optional (default: True)
+        If True, ensure that visual scale of x and y axes is the same for Nyquist plot.
+        Only used if plot_type in ('all', 'nyquist')
+    kw :
+        Keywords to pass to matplotlib.pyplot.plot_func
 
     Returns
     -------
@@ -384,7 +427,7 @@ def plot_eis(df, plot_type='all', area=None, axes=None, label='', plot_func='sca
                          unit_scale=unit_scale, **kw)
     elif plot_type == 'nyquist':
         axes = plot_nyquist(df, area=area, ax=axes, label=label, plot_func=plot_func, unit_scale=unit_scale,
-                            eq_xy=eq_xy, **kw)
+                            set_aspect_ratio=set_aspect_ratio, **kw)
     elif plot_type == 'all':
         if axes is None:
             fig, axes = plt.subplots(1, 3, figsize=(9, 2.75))
@@ -394,7 +437,8 @@ def plot_eis(df, plot_type='all', area=None, axes=None, label='', plot_func='sca
             fig = axes.ravel()[0].get_figure()
 
         # Nyquist plot
-        plot_nyquist(df, area=area, ax=ax1, label=label, plot_func=plot_func, unit_scale=unit_scale, eq_xy=eq_xy, **kw)
+        plot_nyquist(df, area=area, ax=ax1, label=label, plot_func=plot_func, unit_scale=unit_scale,
+                     set_aspect_ratio=set_aspect_ratio, **kw)
 
         # Bode plots
         plot_bode(df, area=area, label=label, axes=(ax2, ax3), plot_func=plot_func, cols=bode_cols,
@@ -411,42 +455,66 @@ def plot_eis(df, plot_type='all', area=None, axes=None, label='', plot_func='sca
 # ----------------------------------
 # Functions for plotting DRT results
 # ----------------------------------
-def plot_distribution(df, inv, ax, distribution=None, tau_plot=np.logspace(-8, 3, 200), plot_bounds=True, plot_ci=True,
+def plot_distribution(df, inv, ax=None, distribution=None, tau_plot=None, plot_bounds=True, plot_ci=True,
                       label='', ci_label='', unit_scale='auto', freq_axis=True, area=None, normalize=False,
                       predict_kw={}, **kw):
     """
-	Parameters:
+    Plot the specified distribution as a function of tau.
+
+	Parameters
 	----------
-		df: pandas DataFrame
-			DataFrame containing experimental EIS data. Used only for scaling and frequency bounds
-			If None is passed, scaling will not be performed and frequency bounds will not be drawn
-		inv: Inverter instance
-			Fitted Inverter instance
-		ax: matplotlib axis
-			Axis to plot on
-		distribution: str, optional (default:'DRT')
-			Name of distribution to plot
-		tau_plot: array, optonal (default:np.logspace(-8,3,200))
-			Time constant grid over which to evaluate the distribution
-		plot_bounds: bool, optional (default: True)
-			If True, indicate frequency bounds of experimental data with vertical lines.
-			Requires that DataFrame of experimental data be passed for df argument
-		label: str, optional (default: '')
-			Label for matplotlib
-		unit_scale: str, optional (default: 'auto')
-			Scaling unit prefix. If 'auto', determine from data.
-			Options are 'mu', 'm', '', 'k', 'M', 'G'
-		freq_axis: bool, optional (default: True)
-			If True, add a secondary x-axis to display frequency
-		area: float, optional (default: None)
-			Active area. If provided, plot the area-normalized distribution
-		normalize: bool, optional (default: False)
-			If True, normalize the distribution such that the polarization resistance is 1
-		predict_kw: dict, optional (default: {})
-			Keyword args to pass to Inverter predict_distribution() method
-		**kw: keyword args, optional
-			Keyword args to pass to maplotlib.pyplot.plot
+    df : pandas DataFrame
+        DataFrame containing experimental EIS data. Used only for scaling and frequency bounds
+        If None is passed, scaling will not be performed and frequency bounds will not be drawn
+    inv : Inverter instance
+        Fitted Inverter instance
+    ax : matplotlib axis
+        Axis on which to plot
+    distribution : str, optional (default: None)
+        Name of distribution to plot. If None, first distribution in inv.distributions will be used
+    tau_plot : array, optonal (default: None)
+        Time constant grid over which to evaluate the distribution.
+        If None, a grid extending one decade beyond the basis time constants in each direction will be used.
+    plot_bounds : bool, optional (default: True)
+        If True, indicate frequency bounds of experimental data with vertical lines.
+        Requires that DataFrame of experimental data be passed for df argument
+    plot_ci : bool, optional (default: True)
+        If True, plot the 95% credible interval of the distribution (if available).
+    label : str, optional (default: '')
+        Label for matplotlib
+    unit_scale : str, optional (default: 'auto')
+        Scaling unit prefix. If 'auto', determine from data.
+        Options are 'mu', 'm', '', 'k', 'M', 'G'
+    freq_axis : bool, optional (default: True)
+        If True, add a secondary x-axis to display frequency
+    area : float, optional (default: None)
+        Active area. If provided, plot the area-normalized distribution
+    normalize : bool, optional (default: False)
+        If True, normalize the distribution such that the polarization resistance is 1
+    predict_kw : dict, optional (default: {})
+        Keyword args to pass to Inverter predict_distribution() method
+    kw : keyword args, optional
+        Keyword args to pass to maplotlib.pyplot.plot
+    Returns
+    -------
+    ax : matplotlib axis
+        Axis on which distribution is plotted
 	"""
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(3.5, 2.75))
+
+    # If no distribution specified, use first distribution
+    if distribution is None:
+        distribution = list(inv.distributions.keys())[0]
+
+    # If tau_plot not given, go one decade beyond basis tau in each direction
+    if tau_plot is None:
+        basis_tau = inv.distributions[distribution]['tau']
+        tmin = np.log10(np.min(basis_tau)) - 1
+        tmax = np.log10(np.max(basis_tau)) + 1
+        num_decades = tmax - tmin
+        tau_plot = np.logspace(tmin, tmax, int(20 * num_decades + 1))
+
     F_pred = inv.predict_distribution(distribution, tau_plot, **predict_kw)
 
     if normalize and area is not None:
@@ -471,13 +539,13 @@ def plot_distribution(df, inv, ax, distribution=None, tau_plot=np.logspace(-8, 3
         if normalize:
             unit_scale = ''
         elif df is not None:
-            unit_scale = bayes_drt.utils.get_unit_scale(df, area)
+            unit_scale = get_unit_scale(df, area)
         else:
             unit_map = {-2: '$\mu$', -1: 'm', 0: '', 1: 'k', 2: 'M', 3: 'G'}
             F_max = np.max(F_pred)
             F_ord = np.floor(np.log10(F_max) / 3)
             unit_scale = unit_map.get(F_ord, '')
-    scale_factor = bayes_drt.utils.get_factor_from_unit(unit_scale)
+    scale_factor = get_factor_from_unit(unit_scale)
 
     ax.plot(tau_plot, F_pred / scale_factor, label=label, **kw)
 
@@ -531,20 +599,138 @@ def plot_distribution(df, inv, ax, distribution=None, tau_plot=np.logspace(-8, 3
         ax2.set_xticklabels(['$10^{{{}}}$'.format(int(p)) for p in f_powers])
         ax2.set_xlabel('$f$ / Hz')
 
-    ax.axhline(0, c='k', lw=0.5)
+    # Indicate zero if necessary
+    if np.min(F_pred) >= 0:
+        ax.set_ylim(0, ax.get_ylim()[1])
+    else:
+        ax.axhline(0, c='k', lw=0.5)
+
+    return ax
 
 
-def plot_resid(df, inv, axes, unit_scale='auto', plot_ci=True, predict_kw={}):
+def plot_fit(df, inv, axes=None, plot_type='all', bode_cols=['Zreal', 'Zimag'], plot_data=True, color='k',
+                 f_pred=None, label='', data_label='', unit_scale='auto', area=None, predict_kw={}, data_kw={}, **kw):
+    """
+    Plot fit of impedance data.
+    Parameters
+    ----------
+    df : pandas DataFrame
+        Dataframe of fitted impedance data
+    inv : Inverter instance
+        Fitted Inverter instance
+    axes : array, optional (default: None)
+        Array or list of axes on which to plot. If None, axes will be created
+    plot_type : str, optional (default: 'all')
+        Type of plot(s) to create. Options:
+            'all': Nyquist and Bode plots
+            'nyquist': Nyquist plot only
+            'bode': Bode plots only
+    bode_cols : list, optional (default: ['Zmod', 'Zphz'])
+        List of data columns to plot in Bode plots. Options: 'Zreal', 'Zimag', 'Zmod', 'Zphz'
+        Only used if plot_type in ('all', 'bode')
+    plot_data : bool, optional (default: True)
+        If True, scatter data and plot fit line. If False, plot fit line only.
+    color : str, optional (default: 'k')
+        Color for fit line
+    f_pred : array, optional (default: None)
+        Frequencies for which to plot fit line. If None, use data frequencies
+    label : str, optional (default: '')
+        Label for fit line
+    data_label : str, optional (default: '')
+        Label for data points
+    unit_scale : str, optional (default: 'auto')
+        Scaling unit prefix. If 'auto', determine from data.
+        Options are 'mu', 'm', '', 'k', 'M', 'G'
+    area : float, optional (default: None)
+        Active area in cm^2. If specified, plot area-normalized impedance.
+    predict_kw : dict, optional (default: {})
+        Keywords to pass to inv.predict_Z
+    data_kw : dict, optional (default: {})
+        Keywords to pass to matplotlib.pyplot.scatter when plotting data points
+    kw : dict, optional (default: {})
+        Keywords to pass to matplotlib.pyplot.plot when plotting fit line
+    Returns
+    -------
+    axes : array
+        Axes on which fit is plotted
+    """
+    if axes is None:
+        if plot_type == 'nyquist':
+            fig, axes = plt.subplots(figsize=(3.5, 2.75))
+        elif plot_type == 'bode':
+            fig, axes = plt.subplots(1, len(bode_cols), figsize=(3 * len(bode_cols), 2.75))
+        elif plot_type == 'all':
+            fig, axes = plt.subplots(1, len(bode_cols) + 1, figsize=(3 * (len(bode_cols) + 1), 2.75))
+
+    if unit_scale == 'auto':
+        unit_scale = get_unit_scale(df, area)
+
     freq = df['Freq'].values
-    Z = df['Zreal'].values + 1j * df['Zimag'].values
+    if f_pred is None:
+        f_pred = freq
+
+    Z_pred = inv.predict_Z(f_pred, **predict_kw)
+    df_pred = fl.construct_eis_df(f_pred, Z_pred)
+
+    data_defaults = dict(s=10, alpha=0.5)
+    data_defaults.update(data_kw)
+
+    # plot Z fit
+    if plot_type == 'all':
+        if plot_data:
+            plot_eis(df, area=area, axes=axes, label=data_label, unit_scale=unit_scale, bode_cols=bode_cols,
+                     **data_defaults)
+        plot_eis(df_pred, area=area, axes=axes, label=label, plot_func='plot', unit_scale=unit_scale,
+                 bode_cols=bode_cols, color=color, **kw)
+    elif plot_type == 'nyquist':
+        if plot_data:
+            plot_nyquist(df, area=area, ax=axes, label=data_label, unit_scale=unit_scale, **data_defaults)
+        plot_nyquist(df_pred, area=area, ax=axes, label=label, plot_func='plot', unit_scale=unit_scale, color=color,
+                     **kw)
+    elif plot_type == 'bode':
+        if plot_data:
+            plot_bode(df, cols=bode_cols, axes=axes, label=data_label, area=area, unit_scale=unit_scale,
+                      **data_defaults)
+        plot_bode(df_pred, axes=axes, cols=bode_cols, plot_func='plot', color=color, unit_scale=unit_scale,
+                  label=label, area=area, **kw)
+
+
+def plot_residuals(df, inv, axes=None, unit_scale='auto', plot_ci=True, predict_kw={}):
+    """
+    Plot the real and imaginary impedance residuals
+
+    Parameters
+    ----------
+    df : pandas DataFrame
+        Dataframe of fitted impedance data
+    inv : Inverter instance
+        Fitted Inverter instance
+    axes : array, optional (default: None)
+        Array or list of axes on which to plot. If None, axes will be created
+    unit_scale : str, optional (default: 'auto')
+        Scaling unit prefix. If 'auto', determine from data.
+        Options are 'mu', 'm', '', 'k', 'M', 'G'
+    plot_ci : bool, optional (default: True)
+        If True, plot the 99.7% credible interval (+/- 3 sigma) of residuals (if available).
+    predict_kw : dict, optional (default: {})
+        Keywords to pass to inv.predict_Z
+    Returns
+    -------
+    axes : array
+        Axes on which residuals are plotted
+    """
+    if axes is None:
+        fig, axes = plt.subplots(1, 2, figsize=(6, 2.75))
+
+    freq, Z = fl.get_fZ(df)
     Z_pred = inv.predict_Z(freq, **predict_kw)
 
     df_err = fl.construct_eis_df(freq, Z_pred - Z)
     if unit_scale == 'auto':
-        err_scale = bayes_drt.utils.get_scale_factor(df_err)
-        unit_scale = bayes_drt.utils.get_unit_scale(df_err)
+        err_scale = get_scale_factor(df_err)
+        unit_scale = get_unit_scale(df_err)
     else:
-        err_scale = bayes_drt.utils.get_factor_from_unit(unit_scale)
+        err_scale = get_factor_from_unit(unit_scale)
 
     plot_bode(df_err, axes=axes, s=10, alpha=0.5, cols=['Zreal', 'Zimag'], unit_scale=unit_scale, label='Residuals')
     if (inv.fit_type == 'bayes' or inv.fit_type[:3] == 'map') and plot_ci:
@@ -563,53 +749,54 @@ def plot_resid(df, inv, axes, unit_scale='auto', plot_ci=True, predict_kw={}):
     axes[1].set_ylabel(fr'$-(\hat{{Z}}^{{\prime\prime}}-Z^{{\prime\prime}})$ / {unit_scale}$\Omega$')
 
 
-def plot_drt_fit(df, inv, axes, plot_type='all', bode_cols=['Zreal', 'Zimag'], plot_data=True, color='k',
-                 f_pred=None, label='', data_label='', unit_scale='auto', area=None, predict_kw={}, data_kw={}, **kw):
-    if unit_scale == 'auto':
-        unit_scale = bayes_drt.utils.get_unit_scale(df, area)
-    freq = df['Freq'].values
-    if f_pred is None:
-        f_pred = freq
+def plot_full_results(df, inv, axes=None, bode_cols=['Zreal', 'Zimag'], plot_data=True, color='k',
+                    tau_plot=None, f_pred=None, plot_ci=True, plot_drt_ci=True, predict_kw={}):
+    """
+    Plot the impedance fit, fitted distribution, and impedance residuals.
 
-    Z_pred = inv.predict_Z(f_pred, **predict_kw)
-    df_pred = fl.construct_eis_df(f_pred, Z_pred)
+    Parameters
+    ----------
+    df : pandas DataFrame
+        Dataframe of fitted impedance data
+    inv : Inverter instance
+        Fitted Inverter instance
+    axes : array, optional (default: None)
+        Array or list of axes on which to plot. If None, axes will be created
+    bode_cols : list, optional (default: ['Zmod', 'Zphz'])
+        List of data columns to plot in Bode plots. Options: 'Zreal', 'Zimag', 'Zmod', 'Zphz'
+        Only used if plot_type in ('all', 'bode')
+    plot_data : bool, optional (default: True)
+        If True, scatter data and plot fit line. If False, plot fit line only.
+    color : str, optional (default: 'k')
+        Color for fit line
+    tau_plot : array, optonal (default: None)
+        Time constant grid over which to evaluate the distribution.
+        If None, a grid extending one decade beyond the basis time constants in each direction will be used.
+    f_pred : array, optional (default: None)
+        Frequencies for which to plot fit line. If None, use data frequencies
+    plot_ci : bool, optional (default: True)
+        If True, plot the 99.7% credible interval (+/- 3 sigma) of residuals (if available).
+    plot_drt_ci : bool, optional (default: True)
+        If True, plot the 95% credible interval of the distribution (if available).
+    predict_kw : dict, optional (default: {})
+        Keywords to pass to inv.predict_Z
 
-    data_defaults = dict(s=10, alpha=0.5)
-    data_defaults.update(data_kw)
-
-    # plot Z fit
-    if plot_type == 'all':
-        if plot_data:
-            plot_eis(df, bode_cols=bode_cols, axes=axes, label=data_label, area=area, unit_scale=unit_scale,
-                     **data_defaults)
-        plot_eis(df_pred, axes=axes, bode_cols=bode_cols, plot_func='plot', color=color, unit_scale=unit_scale,
-                 label=label, area=area, **kw)
-    elif plot_type == 'nyquist':
-        if plot_data:
-            plot_nyquist(df, area=area, ax=axes, label=data_label, unit_scale=unit_scale, **data_defaults)
-        plot_nyquist(df_pred, area=area, ax=axes, label=label, plot_func='plot', unit_scale=unit_scale, color=color,
-                     **kw)
-    elif plot_type == 'bode':
-        if plot_data:
-            plot_bode(df, cols=bode_cols, axes=axes, label=data_label, area=area, unit_scale=unit_scale,
-                      **data_defaults)
-        plot_bode(df_pred, axes=axes, cols=bode_cols, plot_func='plot', color=color, unit_scale=unit_scale,
-                  label=label, area=area, **kw)
-
-
-def plot_drt_result(df, inv, bode_cols=['Zreal', 'Zimag'], plot_data=True, color='k', axes=None,
-                    tau_plot=np.logspace(-8, 3, 200), f_pred=None, plot_ci=True, plot_drt_ci=True, predict_kw={}):
+    Returns
+    -------
+    axes : array
+        Axes on which results are plotted
+    """
     if axes is None:
         fig, axes = plt.subplots(2, 3, figsize=(9, 6))
     else:
         fig = axes.ravel()[0].get_figure()
 
-    unit_scale = bayes_drt.utils.get_unit_scale(df)
-    scale_factor = bayes_drt.utils.get_scale_factor(df)
+    unit_scale = get_unit_scale(df)
+    scale_factor = get_scale_factor(df)
 
     # plot Z fit
-    plot_drt_fit(df, inv, axes[0], bode_cols=bode_cols, color=color, f_pred=f_pred, plot_data=plot_data,
-                 predict_kw=predict_kw, data_label='Data', label='Fit')
+    plot_fit(df, inv, axes[0], bode_cols=bode_cols, plot_data=plot_data, color=color, f_pred=f_pred, label='Fit',
+             data_label='Data', predict_kw=predict_kw)
 
     # plot DRT
     if 'times' in predict_kw.keys():
@@ -628,7 +815,7 @@ def plot_drt_result(df, inv, bode_cols=['Zreal', 'Zimag'], plot_data=True, color
                           predict_kw=predict_kw, plot_ci=plot_drt_ci)
 
     # plot error
-    plot_resid(df, inv, axes[1, 1:], plot_ci=plot_ci, predict_kw=predict_kw)
+    plot_residuals(df, inv, axes[1, 1:], plot_ci=plot_ci, predict_kw=predict_kw)
 
     axes[0, 0].axhline(0, color='k', lw=0.5)
     axes[0, 2].axhline(0, color='k', lw=0.5)
