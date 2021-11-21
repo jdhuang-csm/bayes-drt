@@ -19,7 +19,7 @@ A substantial update was just pushed. If you are using a previous version of `ba
 * Peak fitting functionality has been added
 * Automatic outlier detection has been added - when enabled, this will automatically determine whether the regular error model or the outlier error model should be used
 
-Tutorials have not yet been updated to reflect the changes, but will be soon.
+Tutorial 0 (quickstart) has been updated to reflect the changes. I will update the other tutorials as soon as I can - in the meantime, feel free to ask questions.
 
 ## *Electrochimica Acta* article
 The methods implemented in `bayes_drt` are the subject of an article in *Electrochimica Acta* (https://doi.org/10.1016/j.electacta.2020.137493). The theory behind the model is described in detail in the journal article. All code used to generate the results in the manuscript are available here:
