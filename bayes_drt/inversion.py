@@ -3439,12 +3439,12 @@ class Inverter:
             Weights to use for fitting peaks. Must match length of eval_tau
         prom_rthresh : float, optional (default: 0.001)
             Relative prominence threshold for identifying peaks using scipy.signal.fined_peaks.
-            Threshold is fraction of the largest peak.
+            Threshold is fraction of the estimated polarization resistance
         R_rthresh : float, optional (default: 0.005)
             Relative resistance threshold for keeping fitted peaks.
-            Threshold is fraction of polarization resistance.
+            Threshold is fraction of the estimated polarization resistance.
         l1_penalty : float, optional (default: 0)
-            L1 penalty strength to apply to peak resistance values.
+            L1 penalty strength to apply to peak resistance values. Doesn't seem to work properly - not recommended
         l2_penalty : float, optional (default: 0.01)
             L2 penalty strength to apply to peak resistance values.
         check_chi_sq : bool, optional (default: False)
@@ -3519,6 +3519,38 @@ class Inverter:
 
     def fit_peaks_constrained(self, tau0_guess, distribution=None, eval_tau=None, percentile=None, time=None,
                               sigma_lntau=5, lntau_uncertainty=3, weights=None, l2_penalty=0.01):
+        """
+        Fit peaks at (or near) user-specified time constants. Most reliable peak fitting method if you know the locations of the
+        peaks that you want to fit.
+
+        Parameters
+        ----------
+        tau0_guess : list or array
+            List of initial guesses for peaks time constants. Peaks will be initialized at these time constants and
+            allowed to move only slightly from their initial positions.
+        distribution : str, optional (default: None)
+            Name of distribution to fit. If None, use first distribution in self.distributions
+        eval_tau : array, optional (default: None)
+            tau grid over which to fit distribution. If None, go one decade beyond basis tau in each direction
+        percentile : float, optional (default: None)
+            Percentile of credible interval to fit. Only applies to HMC fits (mode='sample')
+        time : float, optional (default: None)
+            Time at which to evaluate distribution. Only applies to drift fits
+        sigma_lntau : float, optional (default: 5)
+            Scale of variations in ln(tau) from tau0_guess. Larger values allow peak positions to shift more easily from
+            the user-specified initial guesses.
+        lntau_uncertainty : float, optional (default: 3)
+            Uncertainty in ln(tau). Peak time constants are constrained to fall in the range
+            [exp(ln(tau0_guess) - lntau_uncertainty), exp(ln(tau0_guess) + lntau_uncertainty)] during fitting.
+        weights : array, optional (default: None)
+            Weights to use for fitting peaks. Must match length of eval_tau
+        l2_penalty : float, optional (default: 0.01)
+            L2 penalty strength to apply to peak resistance values.
+
+        Returns
+        -------
+
+        """
         # If no distribution specified, use first distribution
         if distribution is None:
             distribution = list(self.distributions.keys())[0]
