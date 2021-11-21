@@ -1069,7 +1069,7 @@ class Inverter:
     # ===============================================
     # Methods for fitting hierarchical Bayesian model
     # ===============================================
-    def fit(self, frequencies, Z, part='both', scale_Z=True, nonneg=True, outliers=False, check_outliers=True,
+    def fit(self, frequencies, Z, part='both', scale_Z=True, nonneg=False, outliers=False, check_outliers=True,
             init_from_ridge=False, ridge_kw={},
             sigma_min=0.002, inductance_scale=1, outlier_lambda=None,
             mode='optimize', random_seed=1234,
@@ -3078,8 +3078,8 @@ class Inverter:
                     Rp = np.real(Z_range[1] - Z_range[0])
                 else:
                     # get the distribution of Rp
-                    Z_mat = self.predict_Z_distribution(np.array([1e20, 1e-20]), distributions=distributions,
-                                                        times=np.array([time, time]))
+                    Z_mat = self.predict_Z_distribution(np.array([1e20, 1e-20]), distributions=distributions)
+                                                        # times=np.array([time, time]))
                     Rp_sample = np.real(Z_mat[:, 1] - Z_mat[:, 0])
                     Rp = np.percentile(Rp_sample, percentile)
 
@@ -3867,7 +3867,7 @@ class Inverter:
 
     def plot_peak_fit(self, ax=None, distribution=None, tau_plot=None, plot_bounds=False, plot_ci=False,
                       plot_distribution=True, plot_individual_peaks=False,
-                      peak_fit_label='Peak fit', distribution_label='$\gamma$', ci_label='95% CI',
+                      peak_fit_label=None, distribution_label='$\gamma$', ci_label='95% CI',
                       unit_scale='auto', freq_axis=True, area=None, normalize=False,
                       predict_kw={}, distribution_kw={}, **kw):
         """
@@ -3954,12 +3954,17 @@ class Inverter:
             scale_factor = get_scale_factor(df, area)
         else:
             scale_factor = get_factor_from_unit(unit_scale)
+
         if plot_individual_peaks:
             peak_info = self.extract_peak_info()
+            if peak_fit_label is None:
+                peak_fit_label = [f'Peak {i + 1}' for i in range(peak_info['num_peaks'])]
             for i in range(peak_info['num_peaks']):
                 F_i = self.predict_peak_distribution(tau_plot, distribution, i)
-                ax.plot(tau_plot, F_i / scale_factor, **kw)
+                ax.plot(tau_plot, F_i / scale_factor, label=peak_fit_label[i], **kw)
         else:
+            if peak_fit_label is None:
+                peak_fit_label = 'Peak fit'
             F_peaks = self.predict_peak_distribution(tau_plot, distribution)
             ax.plot(tau_plot, F_peaks / scale_factor, label=peak_fit_label, **kw)
 

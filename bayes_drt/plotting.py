@@ -694,6 +694,8 @@ def plot_fit(df, inv, axes=None, plot_type='all', bode_cols=['Zreal', 'Zimag'], 
         plot_bode(df_pred, axes=axes, cols=bode_cols, plot_func='plot', color=color, unit_scale=unit_scale,
                   label=label, area=area, **kw)
 
+    return axes
+
 
 def plot_residuals(df, inv, axes=None, unit_scale='auto', plot_ci=True, predict_kw={}):
     """
@@ -747,6 +749,8 @@ def plot_residuals(df, inv, axes=None, unit_scale='auto', plot_ci=True, predict_
 
     axes[0].set_ylabel(fr'$\hat{{Z}}^{{\prime}}-Z^{{\prime}}$ / {unit_scale}$\Omega$')
     axes[1].set_ylabel(fr'$-(\hat{{Z}}^{{\prime\prime}}-Z^{{\prime\prime}})$ / {unit_scale}$\Omega$')
+
+    return axes
 
 
 def plot_full_results(df, inv, axes=None, bode_cols=['Zreal', 'Zimag'], plot_data=True, color='k',

@@ -69,7 +69,8 @@ def peak_fit_residuals(x, tau, gamma, Rp, weights, l1_penalty, l2_penalty):
     resid = evaluate_fit_distribution(x, tau) - gamma
     l1 = np.sqrt(np.abs(x[::4] / Rp)) * l1_penalty
     l2 = (x[::4] / Rp) * l2_penalty
-    return np.concatenate([resid * weights, l1, l2])
+    Rp_resid = 2 * (np.sum(x[::4]) - Rp) / Rp  # add a penalty for mismatch with Rp from DRT
+    return np.concatenate([resid * weights, l1, l2, [Rp_resid]])
 
 
 def fit_peaks(tau, gamma, Rp, weights=None, nonneg=True, check_shoulders=False, prom_rthresh=0.001, R_rthresh=0.005,
@@ -93,7 +94,7 @@ def fit_peaks(tau, gamma, Rp, weights=None, nonneg=True, check_shoulders=False, 
 
     if nonneg:
         x = fit_pos_peaks(tau, gamma, Rp, weights, check_shoulders, prom_rthresh, R_rthresh, check_chi_sq, chi_sq_thresh,
-                          chi_sq_delta, l1_penalty, l2_penalty)
+                          chi_sq_delta, None, l1_penalty, l2_penalty)
     else:
         # Fit positive and negative portions of gamma separately
         gamma_zeros = np.array([gamma, np.zeros_like(gamma)])
@@ -151,6 +152,9 @@ def fit_pos_peaks(tau, gamma, Rp, weights=None, check_shoulders=False, prom_rthr
 
     # identify peaks
     peaks, properties = find_peaks(gamma, width=1, prominence=prom_rthresh * Rp)  # np.max(gamma))
+    if len(peaks) == 0:
+        return []
+
 
     # get initial parameter estimates
     x0 = np.zeros(len(peaks) * 4)  # each peak has 4 parameters: R, t0, gamma, beta
@@ -424,7 +428,8 @@ def constrained_peak_fit(tau, gamma, tau0_guess, Rp, nonneg, lntau_uncertainty=3
         lntau0 = x[1::4]
         tau_resid = (lntau0 - np.log(tau0_guess))
         l2 = (x[::4] / Rp) * l2_penalty
-        return np.concatenate((gamma_resid * weights, tau_resid / sigma_lntau, l2))
+        Rp_resid = 2 * (np.sum(x[::4]) - Rp) / Rp  # add a penalty for mismatch with Rp from DRT
+        return np.concatenate((gamma_resid * weights, tau_resid / sigma_lntau, l2, [Rp_resid]))
 
     # set bounds: R>=0, 0<=alpha<=1, 0<=beta<=1. log_tau must be +/-lntau_uncertainty from tau0_guess
     lb = np.zeros_like(x0)
@@ -448,6 +453,6 @@ def constrained_peak_fit(tau, gamma, tau0_guess, Rp, nonneg, lntau_uncertainty=3
         lb[4 * i:4 * i + 4] = [R_lb, log_t0 - lntau_uncertainty, 0, 0]
         ub[4 * i:4 * i + 4] = [R_ub, log_t0 + lntau_uncertainty, 1, 1]
 
-    result = least_squares(resid, x0, args=(weights,), bounds=(lb, ub))
+    result = least_squares(resid, x0, args=(weights, ), bounds=(lb, ub))
 
     return result
