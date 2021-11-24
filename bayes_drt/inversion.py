@@ -3161,15 +3161,18 @@ class Inverter:
     def predict_distribution(self, name=None, eval_tau=None, percentile=None, time=None):
         """Get fitted distribution(s)
 		"""
+        # If distribution name not specified, use first distribution
+        if name is None:
+            name = list(self.distributions.keys())[0]
+
+        # If eval_tau not specified, use basis tau
+        if eval_tau is None:
+            eval_tau = self.distributions[name]['tau']
 
         if self.fit_type == 'map-drift':
             # evaluate the distribution at the specified time
             if time is None:
                 raise ValueError('time must be supplied for drift fit')
-
-            # If distribution name not specified, use first distribution
-            if name is None:
-                name = list(self.distributions.keys())[0]
 
             model_split = self.stan_model_name.split('_')
             drift_str = [ms for ms in model_split if ms[:5] == 'drift'][0]
@@ -3196,8 +3199,6 @@ class Inverter:
 
                 epsilon = self.distributions[name]['epsilon']
                 basis_tau = self.distributions[name]['tau']
-                if eval_tau is None:
-                    eval_tau = self.distributions[name]['tau']
                 phi = get_basis_func(self.basis)
                 bases = np.array([phi(np.log(eval_tau / t_m), epsilon) for t_m in basis_tau]).T
                 F = bases @ x
@@ -3214,8 +3215,6 @@ class Inverter:
 
                 epsilon = self.distributions[name]['epsilon']
                 basis_tau = self.distributions[name]['tau']
-                if eval_tau is None:
-                    eval_tau = self.distributions[name]['tau']
                 phi = get_basis_func(self.basis)
                 bases = np.array([phi(np.log(eval_tau / t_m), epsilon) for t_m in basis_tau]).T
                 F = bases @ x
@@ -3232,8 +3231,6 @@ class Inverter:
 
                 epsilon = self.distributions[name]['epsilon']
                 basis_tau = self.distributions[name]['tau']
-                if eval_tau is None:
-                    eval_tau = self.distributions[name]['tau']
                 phi = get_basis_func(self.basis)
                 bases = np.array([phi(np.log(eval_tau / t_m), epsilon) for t_m in basis_tau]).T
                 F = bases @ x
@@ -3244,8 +3241,6 @@ class Inverter:
                 # get initial DRT
                 x0 = self.distribution_fits[name]['x0']
 
-                if eval_tau is None:
-                    eval_tau = self.distributions[name]['tau']
                 epsilon = self.distributions[name]['epsilon']
                 basis_tau = self.distributions[name]['tau']
 
@@ -3273,8 +3268,6 @@ class Inverter:
                 # get initial DRT
                 x1 = self.distribution_fits[name]['x1']
 
-                if eval_tau is None:
-                    eval_tau = self.distributions[name]['tau']
                 epsilon = self.distributions[name]['epsilon']
                 basis_tau = self.distributions[name]['tau']
 
@@ -3302,47 +3295,19 @@ class Inverter:
                 return F
 
         else:
-            if name is not None:
-                # return the specified distribution
-                if percentile is not None:
-                    coef = self.coef_percentile(name, percentile)
-                else:
-                    coef = self.distribution_fits[name]['coef']
-
-                epsilon = self.distributions[name]['epsilon']
-                basis_tau = self.distributions[name]['tau']
-                if eval_tau is None:
-                    eval_tau = self.distributions[name]['tau']
-                phi = get_basis_func(self.basis)
-                bases = np.array([phi(np.log(eval_tau / t_m), epsilon) for t_m in basis_tau]).T
-                F = bases @ coef
-
-                return F
+            # return the specified distribution
+            if percentile is not None:
+                coef = self.coef_percentile(name, percentile)
             else:
-                # out = {}
-                # # return all distributions in a dict
-                # for name in self.distributions.keys():
+                coef = self.distribution_fits[name]['coef']
 
-                # return first distribution
-                name = list(self.distributions.keys())[0]
-                if percentile is not None:
-                    coef = self.coef_percentile(name, percentile)
-                else:
-                    coef = self.distribution_fits[name]['coef']
-                epsilon = self.distributions[name]['epsilon']
-                basis_tau = self.distributions[name]['tau']
-                if eval_tau is None:
-                    # don't overwrite eval_tau - need to maintain across multiple distributions
-                    etau = self.distributions[name]['tau']
-                else:
-                    etau = eval_tau
-                phi = get_basis_func(self.basis)
-                bases = np.array([phi(np.log(eval_tau / t_m), epsilon) for t_m in basis_tau]).T
-                F = bases @ coef
-                # 	out[name] = F
-                # return out
+            epsilon = self.distributions[name]['epsilon']
+            basis_tau = self.distributions[name]['tau']
+            phi = get_basis_func(self.basis)
+            bases = np.array([phi(np.log(eval_tau / t_m), epsilon) for t_m in basis_tau]).T
+            F = bases @ coef
 
-                return F
+            return F
 
     def check_outliers(self, frequencies, Z, threshold, use_existing_fit, **ridge_kw):
         """
