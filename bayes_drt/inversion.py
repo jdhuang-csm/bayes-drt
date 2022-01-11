@@ -3952,6 +3952,9 @@ class Inverter:
         else:
             scale_factor = get_factor_from_unit(unit_scale)
 
+        if area is not None:
+            scale_factor /= area
+
         if plot_individual_peaks:
             peak_info = self.extract_peak_info()
             if peak_fit_label is None:

@@ -522,6 +522,7 @@ def plot_distribution(df, inv, ax=None, distribution=None, tau_plot=None, plot_b
 
     if area is not None:
         if df is not None:
+            df = df.copy()
             for col in ['Zmod', 'Zreal', 'Zimag']:
                 df[col] *= area
         F_pred *= area
