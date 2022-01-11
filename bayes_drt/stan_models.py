@@ -1,5 +1,4 @@
-# import pickle
-import pickle5 as pickle
+import pickle
 import pystan as stan
 import os
 
