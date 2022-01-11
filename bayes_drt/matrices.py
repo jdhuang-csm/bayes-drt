@@ -2,7 +2,7 @@ import numpy as np
 from scipy.integrate import quad
 from scipy.linalg import toeplitz
 
-from bayes_drt.utils import rel_round, is_loguniform
+from .utils import rel_round, is_loguniform
 
 
 def get_basis_func(basis):
