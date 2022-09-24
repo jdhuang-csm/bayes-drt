@@ -1637,8 +1637,9 @@ class Inverter:
         dist_name = list(self.distributions.keys())[0]
         dist_type = self.distributions[dist_name]['dist_type']
 
-        # default ridge_fit settings
-        ridge_defaults = dict(preset='Huang', nonneg=nonneg)
+        # default ridge_fit settings for initialization: underfitted to ensure optimizer isn't trapped in a local minimum
+        # ridge_defaults = dict(preset='Huang', nonneg=nonneg)
+		ridge_defaults = dict(penalty='integral', hyper_lambda=True, lambda_0=1, hl_beta=5, weights='modulus')
         # update with any user-upplied settings - may overwrite defaults
         ridge_defaults.update(ridge_kw)
         # get initial parameter values from ridge fit
@@ -1652,11 +1653,11 @@ class Inverter:
             x_star = coef * self._Z_scale
         iv = {'x': x_star}
 
-        # estimate distribution complexity and initialize upsilon accordingly
-        q = self._calc_q(mode, reg_strength=[1, 1, 1])
-        if mode == 'optimize':
-            # Only initialize upsilon for optimization. Let Stan initialize randomly for sampling
-            iv['ups_raw'] = q * 0.5 / 0.15
+        # # estimate distribution complexity and initialize upsilon accordingly
+        # q = self._calc_q(mode, reg_strength=[1, 1, 1])
+        # if mode == 'optimize':
+            # # Only initialize upsilon for optimization. Let Stan initialize randomly for sampling
+            # iv['ups_raw'] = q * 0.5 / 0.15
 
         # input other parameters
         iv['Rinf'] = self.R_inf / self._Z_scale
