@@ -1,4 +1,7 @@
 # bayes_drt
+
+*Note*: if you are having issues with `bayes_drt` or installing it for the first time, I would recommend trying out [`bayes_drt2`](https://github.com/jdhuang-csm/bayes-drt2) instead . It provides the same functionality as `bayes_drt` using a more stable interface to the underlying Stan software.
+
 `bayes_drt` is a Python package for inverting  electrochemical impedance spectroscopy (EIS) data to obtain the distribution of relaxation times (DRT) and/or distribution of diffusion times (DDT).
 
 `bayes_drt` implements a hierarchical Bayesian model to provide well-calibrated estimates of the DRT or DDT without ad-hoc tuning. The package offers two methods for solving the model:
