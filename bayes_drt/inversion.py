@@ -29,24 +29,24 @@ class Inverter:
     def __init__(self, basis_freq=None, basis='gaussian', epsilon=None, fit_inductance=True,
                  distributions={'DRT': {'kernel': 'DRT'}}):
         """
-		Parameters:
-		-----------
-		basis_freq: array (default: None)
-			Frequencies to use for radial basis functions for all distributions. If None, determine from measurement frequencies.
-			If you specify a custom basis_freq, it is highly recommended that you use a spacing of 10 points per decade.
-			basis_freq arrays specified for individual distributions in the distributions argument take precedence over this array.
-		basis: str (defualt: 'gaussian')
-			Type of radial basis function to use. 'gaussian' is currently the only option.
-		epsilon: float (default: None)
-			Inverse length scale of radial basis functions. If None, determined automatically from basis_freq.
-			For best results, leave epsilon at its default value for map_fit and bayes_fit.
-			For ridge_fit, epsilon can be tuned as desired.
-		fit_inductance: bool (default: True)
-			If True, fit inductance; if False, assume inductance is zero. Applies only to ridge_fit.
-		distributions: dict (default: {'DRT':{'kernel':'DRT'}})
-			Dictionary of distributions to fit. Each key-value pair consists of a distribution name and a nested dict of parameters.
-			See set_distributions for details.
-		"""
+        Parameters:
+        -----------
+        basis_freq: array (default: None)
+            Frequencies to use for radial basis functions for all distributions. If None, determine from measurement frequencies.
+            If you specify a custom basis_freq, it is highly recommended that you use a spacing of 10 points per decade.
+            basis_freq arrays specified for individual distributions in the distributions argument take precedence over this array.
+        basis: str (defualt: 'gaussian')
+            Type of radial basis function to use. 'gaussian' is currently the only option.
+        epsilon: float (default: None)
+            Inverse length scale of radial basis functions. If None, determined automatically from basis_freq.
+            For best results, leave epsilon at its default value for map_fit and bayes_fit.
+            For ridge_fit, epsilon can be tuned as desired.
+        fit_inductance: bool (default: True)
+            If True, fit inductance; if False, assume inductance is zero. Applies only to ridge_fit.
+        distributions: dict (default: {'DRT':{'kernel':'DRT'}})
+            Dictionary of distributions to fit. Each key-value pair consists of a distribution name and a nested dict of parameters.
+            See set_distributions for details.
+        """
         self._recalc_mat = True
         self.distribution_matrices = {}
         self.set_basis_freq(basis_freq)
@@ -66,36 +66,36 @@ class Inverter:
     def set_distributions(self, distributions):
         """Set kernels for inversion
 
-		Parameters:
-		-----------
-		distributions: dict
-			Dict of dicts describing distributions to include. Top-level keys are user-supplied names for distributions.
-			Each nested dict defines a distribution and should include the following keys:
-				kernel: 'DRT' or 'DDT'
-				dist_type: 'series' or 'parallel' (default 'parallel'). Valid for DDT only
-				symmetry: 'planar' or 'spherical' (default 'planar'). Valid for DDT only
-				bc: 'transmissive' or 'blocking' (default 'transmissive'). Valid for DDT only
-				ct: boolean indicating whether there is a simultaneous charge transfer reaction (default False).
-					Valid for DDT only
-				k_ct: apparent 1st-order rate constant for simultaneous charge transfer reaction.
-					Required for DDT if ct==True
-				basis_freq: array of frequencies to use as basis. If not specified, use self.basis_freq
-				epsilon: epsilon value for basis functions. If not specified, use self.epsilon
-		"""
+        Parameters:
+        -----------
+        distributions: dict
+            Dict of dicts describing distributions to include. Top-level keys are user-supplied names for distributions.
+            Each nested dict defines a distribution and should include the following keys:
+                kernel: 'DRT' or 'DDT'
+                dist_type: 'series' or 'parallel' (default 'parallel'). Valid for DDT only
+                symmetry: 'planar' or 'spherical' (default 'planar'). Valid for DDT only
+                bc: 'transmissive' or 'blocking' (default 'transmissive'). Valid for DDT only
+                ct: boolean indicating whether there is a simultaneous charge transfer reaction (default False).
+                    Valid for DDT only
+                k_ct: apparent 1st-order rate constant for simultaneous charge transfer reaction.
+                    Required for DDT if ct==True
+                basis_freq: array of frequencies to use as basis. If not specified, use self.basis_freq
+                epsilon: epsilon value for basis functions. If not specified, use self.epsilon
+        """
         # perform checks and normalizations
         for name, info in distributions.items():
             if info['kernel'] == 'DRT':
                 # set dist_type to series and warn if overwriting
                 if info.get('dist_type', 'series') != 'series':
                     warnings.warn("dist_type for DRT kernel must be series. \
-					Overwriting supplied dist_type '{}' for distribution '{}' with 'series'".format(name,
+                    Overwriting supplied dist_type '{}' for distribution '{}' with 'series'".format(name,
                                                                                                     info['dist_type']))
                 info['dist_type'] = 'series'
                 # check for invalid keys and warn
                 invalid_keys = np.intersect1d(list(info.keys()), ['symmetry', 'bc', 'ct', 'k_ct'])
                 if len(invalid_keys) > 0:
                     warnings.warn("The following keys are invalid for distribution '{}': {}.\
-					\n These keys will be ignored".format(name, invalid_keys))
+                    \n These keys will be ignored".format(name, invalid_keys))
 
             elif info['kernel'] == 'DDT':
                 # check for invalid key-value pairs
@@ -156,115 +156,115 @@ class Inverter:
                   # other parameters
                   x0=None, dZ=False, dZ_power=0.5):
         """
-		Perform ridge fit. Only valid for single-distribution fits.
+        Perform ridge fit. Only valid for single-distribution fits.
 
-		Parameters:
-		-----------
-		frequencies: array
-			Measured frequencies
-		Z: complex array
-			Measured (complex) impedance values. Must have same length as frequencies
-		part: str, optional (default: 'both')
-			Which part of the impedance data to fit. Options: 'both', 'real', 'imag'
-		penalty: str, optional (default: 'discrete')
-			Type of penalty matrix to apply to the coefficients. Options:
-				'discrete': Applies a matrix that yields the derivative of the distribution at discrete values of tau
-				'integral': Applies a matrix that yields the integral of the squared derivative of the distribution across all tau
-				'cholesky': Applies the Cholesky decomposition of the integral matrix. Tends to induce asymmetry; not recommended
-		reg_ord: int or list, optional (default: 2)
-			Order of the derivative to regularize. If int, penalize the nth derivative.
-			If list, the penalty will consist of a weighted sum of the 0th-2nd derivatives.
-			The list must be length 3, with the first entry indicating the weight of the 0th derivative,
-			2nd entry indicating the weight of the 1st derivative, and 3rd entry indicating the weight of the 2nd derivative.
-		L1_penalty: float, optional (default: 0)
-			Magnitude of L1 (LASSO) penalty to apply to coefficients.
-			If L1_penalty > 0, the fit becomes an elastic net regression
-		scale_Z: bool, optional (default: True)
-			If True, scale impedance by the factor sqrt(N)/std(|Z|) to normalize for magnitude and sample size
-		nonneg: bool, optional (default: False)
-			If True, constrain the distribution to non-negative values
-		weights : str or array (default: None)
-			Weights for fit. Standard weighting schemes can be specified by passing 'modulus' or 'proportional'.
-			Custom weights can be passed as an array. If the array elements are real, the weights are applied to both the real and imaginary parts of the impedance.
-			If the array elements are complex, the real parts are used to weight the real impedance, and the imaginary parts are used to weight the imaginary impedance.
-			If None, all points are weighted equally.
-		preset: str, optional (default: None)
-			Name of preset settings to use for optimization. Options and corresponding arguments are as follows:
-			'Ciucci': penalty='discrete',lambda_0='cv',hl_fbeta=0.1
-			'Huang': penalty='integral',weights='modulus',dZ=True
+        Parameters:
+        -----------
+        frequencies: array
+            Measured frequencies
+        Z: complex array
+            Measured (complex) impedance values. Must have same length as frequencies
+        part: str, optional (default: 'both')
+            Which part of the impedance data to fit. Options: 'both', 'real', 'imag'
+        penalty: str, optional (default: 'discrete')
+            Type of penalty matrix to apply to the coefficients. Options:
+                'discrete': Applies a matrix that yields the derivative of the distribution at discrete values of tau
+                'integral': Applies a matrix that yields the integral of the squared derivative of the distribution across all tau
+                'cholesky': Applies the Cholesky decomposition of the integral matrix. Tends to induce asymmetry; not recommended
+        reg_ord: int or list, optional (default: 2)
+            Order of the derivative to regularize. If int, penalize the nth derivative.
+            If list, the penalty will consist of a weighted sum of the 0th-2nd derivatives.
+            The list must be length 3, with the first entry indicating the weight of the 0th derivative,
+            2nd entry indicating the weight of the 1st derivative, and 3rd entry indicating the weight of the 2nd derivative.
+        L1_penalty: float, optional (default: 0)
+            Magnitude of L1 (LASSO) penalty to apply to coefficients.
+            If L1_penalty > 0, the fit becomes an elastic net regression
+        scale_Z: bool, optional (default: True)
+            If True, scale impedance by the factor sqrt(N)/std(|Z|) to normalize for magnitude and sample size
+        nonneg: bool, optional (default: False)
+            If True, constrain the distribution to non-negative values
+        weights : str or array (default: None)
+            Weights for fit. Standard weighting schemes can be specified by passing 'modulus' or 'proportional'.
+            Custom weights can be passed as an array. If the array elements are real, the weights are applied to both the real and imaginary parts of the impedance.
+            If the array elements are complex, the real parts are used to weight the real impedance, and the imaginary parts are used to weight the imaginary impedance.
+            If None, all points are weighted equally.
+        preset: str, optional (default: None)
+            Name of preset settings to use for optimization. Options and corresponding arguments are as follows:
+            'Ciucci': penalty='discrete',lambda_0='cv',hl_fbeta=0.1
+            'Huang': penalty='integral',weights='modulus',dZ=True
 
-		hyper_lambda parameters:
-		-------------------------
-		hyper_lambda: bool, optional (default: True)
-			If True, allow the regularization parameter lambda to vary with tau (hierarchical ridge).
-			See https://www.sciencedirect.com/science/article/pii/S0013468617314676 for details.
-			If False, perform ordinary ridge regression
-		hl_solution: str, optional (default: 'analytic')
-			Solution method for determining lambda values when hyper_lambda==True. Options:
-				'analytic': Use analytic solution. Generally works well
-				'lm': Use Levenberg-Marquardt algorithm. May help avoid oscillation
-				arising from analytic solution in some cases
-		hl_beta: float, optional (default: 2.5)
-			Beta hyperparameter of gamma prior for hyper_lambda method.
-			Smaller values allow greater variation in the regularization parameter lambda.
-			If penalty is 'discrete' or 'cholesky', hl_beta > 1.
-			If penalty=='integral', hl_beta > 2
-		hl_fbeta: float, optional (default: None)
-			If specified, ignore hl_beta and instead set the f_beta hyperparameter, which
-			normalizes for the magnitude of the penalty for the recovered distribution.
-			Smaller values allow greater variation in the regularization parameter lambda.
-			See http://dx.doi.org/10.1016/j.electacta.2015.03.123 Eqs. 35-36 for details
-		lambda_0: float, optional (default: 1e-2)
-			lambda_0 hyperparameter for hyper_lambda method.
-			Larger values result in stronger baseline level of regularization.
-			If lambda_0=='cv', perform Re-Im cross-validation to estimate the optimal lambda_0.
-		cv_lambdas: array, optional (default: np.logspace(-10,5,31))
-			lambda_0 grid for Re-Im cross-validation if lambda_0=='cv'
+        hyper_lambda parameters:
+        -------------------------
+        hyper_lambda: bool, optional (default: True)
+            If True, allow the regularization parameter lambda to vary with tau (hierarchical ridge).
+            See https://www.sciencedirect.com/science/article/pii/S0013468617314676 for details.
+            If False, perform ordinary ridge regression
+        hl_solution: str, optional (default: 'analytic')
+            Solution method for determining lambda values when hyper_lambda==True. Options:
+                'analytic': Use analytic solution. Generally works well
+                'lm': Use Levenberg-Marquardt algorithm. May help avoid oscillation
+                arising from analytic solution in some cases
+        hl_beta: float, optional (default: 2.5)
+            Beta hyperparameter of gamma prior for hyper_lambda method.
+            Smaller values allow greater variation in the regularization parameter lambda.
+            If penalty is 'discrete' or 'cholesky', hl_beta > 1.
+            If penalty=='integral', hl_beta > 2
+        hl_fbeta: float, optional (default: None)
+            If specified, ignore hl_beta and instead set the f_beta hyperparameter, which
+            normalizes for the magnitude of the penalty for the recovered distribution.
+            Smaller values allow greater variation in the regularization parameter lambda.
+            See http://dx.doi.org/10.1016/j.electacta.2015.03.123 Eqs. 35-36 for details
+        lambda_0: float, optional (default: 1e-2)
+            lambda_0 hyperparameter for hyper_lambda method.
+            Larger values result in stronger baseline level of regularization.
+            If lambda_0=='cv', perform Re-Im cross-validation to estimate the optimal lambda_0.
+        cv_lambdas: array, optional (default: np.logspace(-10,5,31))
+            lambda_0 grid for Re-Im cross-validation if lambda_0=='cv'
 
-		hyper_weights parameters:
-		-------------------------
-		hyper_weights: bool, optional (default: False)
-			If true, optimize weights along with coefficients.
-			Allows for outlier identification and estimation of relative error structure.
-			See https://www.sciencedirect.com/science/article/pii/S0013468617314676 for details
-		hw_beta: float, optional (default: 2)
-			beta hyperparameter of gamma prior for hyper_weights method.
-			Smaller values allow weights to approach zero (outlier) more easily.
-			Must be greater than 1
-		hw_wbar: float, optional (default: 1)
-			Expectation value of gamma prior on weights
+        hyper_weights parameters:
+        -------------------------
+        hyper_weights: bool, optional (default: False)
+            If true, optimize weights along with coefficients.
+            Allows for outlier identification and estimation of relative error structure.
+            See https://www.sciencedirect.com/science/article/pii/S0013468617314676 for details
+        hw_beta: float, optional (default: 2)
+            beta hyperparameter of gamma prior for hyper_weights method.
+            Smaller values allow weights to approach zero (outlier) more easily.
+            Must be greater than 1
+        hw_wbar: float, optional (default: 1)
+            Expectation value of gamma prior on weights
 
-		# convex optimization control:
-		------------------------------
-		xtol: float, optional (default: 1e-3)
-			Coefficient tolerance for iterative optimization (hyper_lambda or hyper_weights).
-			Optimization stops when mean change in coefficients drops below xtol
-		max_iter: int, optional (default: 20)
-			Maximum iterations to perform for hyper_lambda or hyper_weights fits
+        # convex optimization control:
+        ------------------------------
+        xtol: float, optional (default: 1e-3)
+            Coefficient tolerance for iterative optimization (hyper_lambda or hyper_weights).
+            Optimization stops when mean change in coefficients drops below xtol
+        max_iter: int, optional (default: 20)
+            Maximum iterations to perform for hyper_lambda or hyper_weights fits
 
-		correct_phase_offset parameters:
-		--------------------------------
-		correct_phase_offset: bool, optional (default: False)
-			If True, correct phase offsets that may occur due to changes in the
-			hardware current range.
-		IERange: array, optional (default: None)
-			Array of I/E ranges (hardware current ranges, represented as ints) used to measure impedance.
-			Must have same length as frequencies. Required if correct_phase_offset==True
-		lambda_phz: float, optional (default: 1)
-			Inverse scale parameter for exponential prior on phase offsets.
-			Larger values regularize phase offsets more strongly, leading to smaller offset values.
-		init_phase_offset: bool, optional (default: False)
-			If True, estimate phase offsets and adjust Z before first DRT fit.
+        correct_phase_offset parameters:
+        --------------------------------
+        correct_phase_offset: bool, optional (default: False)
+            If True, correct phase offsets that may occur due to changes in the
+            hardware current range.
+        IERange: array, optional (default: None)
+            Array of I/E ranges (hardware current ranges, represented as ints) used to measure impedance.
+            Must have same length as frequencies. Required if correct_phase_offset==True
+        lambda_phz: float, optional (default: 1)
+            Inverse scale parameter for exponential prior on phase offsets.
+            Larger values regularize phase offsets more strongly, leading to smaller offset values.
+        init_phase_offset: bool, optional (default: False)
+            If True, estimate phase offsets and adjust Z before first DRT fit.
 
-		other parameters:
-		-----------------
-		dZ: bool, optional (default: False)
-		    For testing only
-		dZ_power: float, optional (default: 0.5)
-		    For testing only
-		x0: array, optional (default: None)
-		    Initial parameters for optimization. If None, initalize all coefficients near zero.
-		"""
+        other parameters:
+        -----------------
+        dZ: bool, optional (default: False)
+            For testing only
+        dZ_power: float, optional (default: 0.5)
+            For testing only
+        x0: array, optional (default: None)
+            Initial parameters for optimization. If None, initalize all coefficients near zero.
+        """
         # apply presets
         presets = ['Ciucci', 'Huang']
         if preset is not None:
@@ -1010,17 +1010,17 @@ class Inverter:
     def _hyper_weights(self, coef, A_re, A_im, Z, hw_beta, wbar):
         """Calculate hyper weights
 
-		Parameters:
-		-----------
-		coef: array
-			Current coefficients
-		Z: array
-			Measured complex impedance
-		hw_beta: float
-			Beta hyperparameter for weight hyperprior
-		wbar: array
-			Expected weights
-		"""
+        Parameters:
+        -----------
+        coef: array
+            Current coefficients
+        Z: array
+            Measured complex impedance
+        hw_beta: float
+            Beta hyperparameter for weight hyperprior
+        wbar: array
+            Expected weights
+        """
         # calculate zeta
         zeta_re = hw_beta / np.real(wbar)
         zeta_im = hw_beta / np.imag(wbar)
@@ -1295,43 +1295,43 @@ class Inverter:
                       ridge_kw={}, add_stan_data={},
                       fitY=False, Yscale=1, SA=False, SASY=False):
         """
-		Obtain the maximum a posteriori estimate of the defined distribution(s) (and all model parameters).
+        Obtain the maximum a posteriori estimate of the defined distribution(s) (and all model parameters).
 
-		Parameters:
-		-----------
-		frequencies: array
-			Measured frequencies
-		Z: complex array
-			Measured (complex) impedance values. Must have same length as frequencies
-		part: str, optional (default: 'both')
-			Which part of the impedance data to fit. Options: 'both', 'real', 'imag'
-		scale_Z: bool, optional (default: True)
-			If True, scale impedance by the factor sqrt(N)/std(|Z|) to normalize for magnitude and sample size
-		init_from_ridge: bool, optional (default: False)
-			If True, use the hyperparametric ridge solution to initialize the Bayesian fit.
-			Only valid for single-distribution fits
-		nonneg: bool, optional (default: False)
-			If True, constrain the DRT to non-negative values
-		outliers: bool, optional (default: False)
-			If True, enable outlier identification via independent error contribution variable
-		sigma_min: float, optional (default: 0.002)
-			Impedance error floor. This is necessary to avoid sampling/optimization errors.
-			Values smaller than the default (0.002) may enable slightly closer fits of very clean data,
-			but may also result in sampling/optimization errors that yield unexpected results.
-		max_iter: int, optional (default: 50000)
-			Maximum number of iterations to allow the optimizer to perform
-		random_seed: int, optional (default: 1234)
-			Random seed for optimizer
-		inductance_scale: float, optional (default: 1)
-			Scale (std of normal prior) of the inductance. Lower values will constrain the inductance,
-			which may be helpful if the estimated inductance is anomalously large (this may occur if your
-			measured impedance data does not extend to high frequencies, i.e. 1e5-1e6 Hz)
-		outlier_lambda: float, optional (default: 5)
-			Lambda parameter (inverse scale) of the exponential prior on the outlier error contribution.
-			Smaller values will make it easier for points to be flagged as outliers
-		ridge_kw: dict, optional (default: {})
-			Keyword arguments to pass to ridge_fit if init_from_ridge==True.
-		"""
+        Parameters:
+        -----------
+        frequencies: array
+            Measured frequencies
+        Z: complex array
+            Measured (complex) impedance values. Must have same length as frequencies
+        part: str, optional (default: 'both')
+            Which part of the impedance data to fit. Options: 'both', 'real', 'imag'
+        scale_Z: bool, optional (default: True)
+            If True, scale impedance by the factor sqrt(N)/std(|Z|) to normalize for magnitude and sample size
+        init_from_ridge: bool, optional (default: False)
+            If True, use the hyperparametric ridge solution to initialize the Bayesian fit.
+            Only valid for single-distribution fits
+        nonneg: bool, optional (default: False)
+            If True, constrain the DRT to non-negative values
+        outliers: bool, optional (default: False)
+            If True, enable outlier identification via independent error contribution variable
+        sigma_min: float, optional (default: 0.002)
+            Impedance error floor. This is necessary to avoid sampling/optimization errors.
+            Values smaller than the default (0.002) may enable slightly closer fits of very clean data,
+            but may also result in sampling/optimization errors that yield unexpected results.
+        max_iter: int, optional (default: 50000)
+            Maximum number of iterations to allow the optimizer to perform
+        random_seed: int, optional (default: 1234)
+            Random seed for optimizer
+        inductance_scale: float, optional (default: 1)
+            Scale (std of normal prior) of the inductance. Lower values will constrain the inductance,
+            which may be helpful if the estimated inductance is anomalously large (this may occur if your
+            measured impedance data does not extend to high frequencies, i.e. 1e5-1e6 Hz)
+        outlier_lambda: float, optional (default: 5)
+            Lambda parameter (inverse scale) of the exponential prior on the outlier error contribution.
+            Smaller values will make it easier for points to be flagged as outliers
+        ridge_kw: dict, optional (default: {})
+            Keyword arguments to pass to ridge_fit if init_from_ridge==True.
+        """
         # load stan model
         if model_str is None:
             model, model_str = self._get_stan_model(nonneg, outliers, True, drift_model, fitY, SA)
@@ -1566,13 +1566,13 @@ class Inverter:
     def _get_stan_model(self, nonneg, outliers, drift, drift_model, fitY, SA):
         """Get the appropriate Stan model for the distributions. Called by map_fit and bayes_fit methods
 
-		Parameters:
-		-----------
-		nonneg: bool
-			If True, constrain DRT to be non-negative. If False, allow negative DRT values
-		outliers: bool
-			If True, enable outlier detection. If False, do not include outlier error contribution in error model.
-		"""
+        Parameters:
+        -----------
+        nonneg: bool
+            If True, constrain DRT to be non-negative. If False, allow negative DRT values
+        outliers: bool
+            If True, enable outlier detection. If False, do not include outlier error contribution in error model.
+        """
         num_series = len([name for name, info in self.distributions.items() if info['dist_type'] == 'series'])
         num_par = len([name for name, info in self.distributions.items() if info['dist_type'] == 'parallel'])
 
@@ -1587,7 +1587,7 @@ class Inverter:
         else:
             model_str = 'MultiDist'
             warnings.warn('The MultiDist model will handle an arbitrary number of series and/or parallel distributions, but the computational performance and accuracy are suboptimal. \
-			Hard-coding your own model will most likely yield better results.')
+            Hard-coding your own model will most likely yield better results.')
 
         if nonneg and num_series >= 1:
             model_str += '_pos'
@@ -1615,31 +1615,31 @@ class Inverter:
 
     def _get_init_from_ridge(self, frequencies, Z, mode, nonneg, outliers, inductance_scale, ridge_kw):
         """Get initial parameter estimate from ridge_fit
-		Parameters:
-		-----------
-		frequencies: array
-			Array of frequencies
-		Z: array
-			Impedance data
-		hl_beta: float
-			beta regularization parameter
-		lambda_0: float
-			lambda_0 regularization parameter
-		nonneg: bool
-			If True, constrain distribution to non-negative values
-		outliers: bool
-			If True, initialize sigma_out near zero
-		inductance_scale: float
-			Scale (std of normal prior) of the inductance
-		ridge_kw: dict
+        Parameters:
+        -----------
+        frequencies: array
+            Array of frequencies
+        Z: array
+            Impedance data
+        hl_beta: float
+            beta regularization parameter
+        lambda_0: float
+            lambda_0 regularization parameter
+        nonneg: bool
+            If True, constrain distribution to non-negative values
+        outliers: bool
+            If True, initialize sigma_out near zero
+        inductance_scale: float
+            Scale (std of normal prior) of the inductance
+        ridge_kw: dict
 
-		"""
+        """
         dist_name = list(self.distributions.keys())[0]
         dist_type = self.distributions[dist_name]['dist_type']
 
         # default ridge_fit settings for initialization: underfitted to ensure optimizer isn't trapped in a local minimum
         # ridge_defaults = dict(preset='Huang', nonneg=nonneg)
-		ridge_defaults = dict(penalty='integral', hyper_lambda=True, lambda_0=1, hl_beta=5, weights='modulus')
+        ridge_defaults = dict(penalty='integral', hyper_lambda=True, lambda_0=1, hl_beta=5, weights='modulus')
         # update with any user-upplied settings - may overwrite defaults
         ridge_defaults.update(ridge_kw)
         # get initial parameter values from ridge fit
@@ -1667,7 +1667,7 @@ class Inverter:
             iv['induc'] = 1e-10
         iv['induc_raw'] = iv['induc'] / inductance_scale
 
-        if outliers is True or outliers is 'auto':
+        if outliers:
             # identify likely outliers. Use less stringent threshold to avoid missing outliers
             outlier_idx = self.check_outliers(frequencies, Z, threshold=3, use_existing_fit=True)
             if outliers is True or len(outlier_idx) > 0:
@@ -1685,25 +1685,25 @@ class Inverter:
                         outlier_lambda, fitY, SA, SASY):
         """Prepare input data for Stan model. Called by map_fit and bayes_fit methods
 
-		Parameters:
-		-----------
-		frequencies: array
-			Measured frequencies
-		Z: complex array
-			Measured (complex) impedance values
-		part: str
-			Which part of the impedance data to fit. Options: 'both', 'real', 'imag'
-		model_type: str
-			Model type indicating distributions to be recovered
-		dist_mat: dict
-			Distribution matrices dict
-		outliers: bool
-			Whether or not to enable outlier detection
-		sigma_min: float
-			Minimum value of error scale
-		mode: str
-			Solution mode. Options: 'sample', 'optimize'
-		"""
+        Parameters:
+        -----------
+        frequencies: array
+            Measured frequencies
+        Z: complex array
+            Measured (complex) impedance values
+        part: str
+            Which part of the impedance data to fit. Options: 'both', 'real', 'imag'
+        model_type: str
+            Model type indicating distributions to be recovered
+        dist_mat: dict
+            Distribution matrices dict
+        outliers: bool
+            Whether or not to enable outlier detection
+        sigma_min: float
+            Minimum value of error scale
+        mode: str
+            Solution mode. Options: 'sample', 'optimize'
+        """
 
         if outlier_lambda is None:
             if mode == 'optimize':
@@ -2337,17 +2337,17 @@ class Inverter:
 
     def _format_weights(self, frequencies, Z, weights, part):
         """
-		Format real and imaginary weight vectors
-		Parameters:
-		-----------
-		weights : str or array (default: None)
-			Weights for fit. Standard weighting schemes can be specified by passing 'unity', 'modulus', or 'proportional'.
-			Custom weights can be passed as an array. If the array elements are real, the weights are applied to both the real and imaginary parts of the impedance.
-			If the array elements are complex, the real parts are used to weight the real impedance, and the imaginary parts are used to weight the imaginary impedance.
-			If None, all points are weighted equally.
-		part : str (default:'both')
-			Which part of impedance is being fitted. Options: 'both', 'real', or 'imag'
-		"""
+        Format real and imaginary weight vectors
+        Parameters:
+        -----------
+        weights : str or array (default: None)
+            Weights for fit. Standard weighting schemes can be specified by passing 'unity', 'modulus', or 'proportional'.
+            Custom weights can be passed as an array. If the array elements are real, the weights are applied to both the real and imaginary parts of the impedance.
+            If the array elements are complex, the real parts are used to weight the real impedance, and the imaginary parts are used to weight the imaginary impedance.
+            If None, all points are weighted equally.
+        part : str (default:'both')
+            Which part of impedance is being fitted. Options: 'both', 'real', or 'imag'
+        """
         if weights is None or weights == 'unity':
             weights = np.ones_like(frequencies) * (1 + 1j)
         elif type(weights) == str:
@@ -2451,20 +2451,20 @@ class Inverter:
 
     def _calc_q(self, mode, distribution_name=None, reg_strength=[1, 1, 1]):
         """
-		Calculate distribution complexity
-		Parameters:
-		-----------
-		distribution_name: str, optional (default: None)
-			Name of distribution for which to calculate complexity
-			If not specified, uses first distribution in self.distributions
-		mode: str
-			Solver mode. Determines scaling of differentiation matrices
-			Options: 'optimize', 'sample'
-			If None, regularization strengths are taken from reg_strength argument
-		reg_strength: array-like, optional (default: [1,1,1])
-			Regularization strength of 0th, 1st, and 2nd derivatives of the distribution, respectively.
-			Defaults to [1,1,1] (equal strengths)
-		"""
+        Calculate distribution complexity
+        Parameters:
+        -----------
+        distribution_name: str, optional (default: None)
+            Name of distribution for which to calculate complexity
+            If not specified, uses first distribution in self.distributions
+        mode: str
+            Solver mode. Determines scaling of differentiation matrices
+            Options: 'optimize', 'sample'
+            If None, regularization strengths are taken from reg_strength argument
+        reg_strength: array-like, optional (default: [1,1,1])
+            Regularization strength of 0th, 1st, and 2nd derivatives of the distribution, respectively.
+            Defaults to [1,1,1] (equal strengths)
+        """
         if distribution_name is None:
             distribution_name = list(self.distributions.keys())[0]
         dist_mat = self.distribution_matrices[distribution_name]
@@ -2521,11 +2521,11 @@ class Inverter:
     def _get_stan_coef_name(self, distribution_name):
         """Get stan model coefficient name for distribution
 
-		Parameters:
-		-----------
-		distribution_name: str
-			Name of distribution
-		"""
+        Parameters:
+        -----------
+        distribution_name: str
+            Name of distribution
+        """
         dist_type = self.distributions[distribution_name]['dist_type']
         model_type = self.stan_model_name.split('_')[0]
         if model_type in ['Series', 'Parallel']:
@@ -2547,13 +2547,13 @@ class Inverter:
     def coef_percentile(self, distribution_name, percentile):
         """Get percentile for distribution coefficients
 
-		Parameters:
-		-----------
-		distribution_name: str
-			Name of distribution
-		percentile: float
-			Percentile (0-100) to calculate
-		"""
+        Parameters:
+        -----------
+        distribution_name: str
+            Name of distribution
+        percentile: float
+            Percentile (0-100) to calculate
+        """
         if self.fit_type == 'bayes':
             dist_type = self.distributions[distribution_name]['dist_type']
             coef_name = self._get_stan_coef_name(distribution_name)
@@ -2669,18 +2669,18 @@ class Inverter:
     def predict_Z(self, frequencies, times=None, distributions=None, include_offsets=True, percentile=None):
         """Predict impedance from recovered distributions
 
-		Parameters:
-		-----------
-		frequencies: array
-			Frequencies at which to predict impedance
-		distributions: str or list (default: None)
-			Distribution name or list of distribution names for which to sum Rp contributions.
-			If None, include all distributions
-		include_offsets: bool (default: True)
-			If True, include contributions of R_inf and inductance. If False, include only contributions from distributions.
-		percentile: float (default: None)
-			If specified, predict a percentile (0-100) of the posterior distribution. Only applicable for bayes_fit results.
-		"""
+        Parameters:
+        -----------
+        frequencies: array
+            Frequencies at which to predict impedance
+        distributions: str or list (default: None)
+            Distribution name or list of distribution names for which to sum Rp contributions.
+            If None, include all distributions
+        include_offsets: bool (default: True)
+            If True, include contributions of R_inf and inductance. If False, include only contributions from distributions.
+        percentile: float (default: None)
+            If specified, predict a percentile (0-100) of the posterior distribution. Only applicable for bayes_fit results.
+        """
         if distributions is not None:
             if type(distributions) == str:
                 distributions = [distributions]
@@ -2963,22 +2963,22 @@ class Inverter:
     def predict_Z_distribution(self, frequencies, distributions=None, include_offsets=True):
         """Predict posterior distribution of impedance. Only applicable for fits obtained with bayes_fit
 
-		Parameters:
-		-----------
-		frequencies: array
-			Frequencies at which to predict impedance
-		distributions: str or list (default: None)
-			Distribution name or list of distribution names for which to sum Rp contributions.
-			If None, include all distributions
-		include_offsets: bool (default: True)
-			If True, include contributions of R_inf and inductance. If False, include only contributions from distributions.
-		percentile: float (default: None)
-			If specified, predict a percentile (0-100) of the posterior distribution. Only applicable for bayes_fit results.
+        Parameters:
+        -----------
+        frequencies: array
+            Frequencies at which to predict impedance
+        distributions: str or list (default: None)
+            Distribution name or list of distribution names for which to sum Rp contributions.
+            If None, include all distributions
+        include_offsets: bool (default: True)
+            If True, include contributions of R_inf and inductance. If False, include only contributions from distributions.
+        percentile: float (default: None)
+            If specified, predict a percentile (0-100) of the posterior distribution. Only applicable for bayes_fit results.
 
-		Returns:
-		Z_pred_matrix: array
-			Array of sampled impedance vectors. Each row is a sample
-		"""
+        Returns:
+        Z_pred_matrix: array
+            Array of sampled impedance vectors. Each row is a sample
+        """
         if self.fit_type != 'bayes':
             raise ValueError('predict_Z_distribution is only available for bayes_fit results')
 
@@ -3033,14 +3033,14 @@ class Inverter:
     def predict_Rp(self, distributions=None, percentile=None, time=None):
         """Predict polarization resistance
 
-		Parameters:
-		-----------
-		distributions: str or list (default: None)
-			Distribution name or list of distribution names for which to sum Rp contributions.
-			If None, include all distributions
-		percentile: float (default: None)
-			If specified, predict a percentile (0-100) of the polarization resistance. Only applicable for bayes_fit results.
-		"""
+        Parameters:
+        -----------
+        distributions: str or list (default: None)
+            Distribution name or list of distribution names for which to sum Rp contributions.
+            If None, include all distributions
+        percentile: float (default: None)
+            If specified, predict a percentile (0-100) of the polarization resistance. Only applicable for bayes_fit results.
+        """
         if distributions is not None:
             if type(distributions) == str:
                 distributions = [distributions]
@@ -3161,7 +3161,7 @@ class Inverter:
 
     def predict_distribution(self, name=None, eval_tau=None, percentile=None, time=None):
         """Get fitted distribution(s)
-		"""
+        """
         # If distribution name not specified, use first distribution
         if name is None:
             name = list(self.distributions.keys())[0]
@@ -3312,33 +3312,33 @@ class Inverter:
 
     def check_outliers(self, frequencies, Z, threshold, use_existing_fit, **ridge_kw):
         """
-		Check for outliers in the impedance data.
-		If Inverter instance has been fitted, use existing fit.
-		Otherwise, use ridge_fit to check for outliers.
-		Also used as a check when outliers='auto' in map_fit and bayes_fit.
+        Check for outliers in the impedance data.
+        If Inverter instance has been fitted, use existing fit.
+        Otherwise, use ridge_fit to check for outliers.
+        Also used as a check when outliers='auto' in map_fit and bayes_fit.
 
-		Parameters:
-		-----------
-		frequencies: array
-			Array of measurement frequencies
-		Z: complex array
-			Array of complex impedance values
-		threshold: float
-			Threshold for outlier flagging. If fit type is ridge, threshold is the number of IQRs by which a residual
-			must exceed the 75th percentile to be flagged as an outlier. If fit type is map or bayes, threshold is minimum
-			z-score of residual required to be flagged as an outlier.
-		use_existing_fit: bool
-			If True, use the existing fit to check for outliers (if a fit exists for the provided dataset).
-			If False, use a new ridge fit to check for outliers.
-		ridge_kw:
-			Keyword args to pass to ridge_fit if Inverter instance has not yet been fitted.
-			Ignored if Inverter has already been fitted
+        Parameters:
+        -----------
+        frequencies: array
+            Array of measurement frequencies
+        Z: complex array
+            Array of complex impedance values
+        threshold: float
+            Threshold for outlier flagging. If fit type is ridge, threshold is the number of IQRs by which a residual
+            must exceed the 75th percentile to be flagged as an outlier. If fit type is map or bayes, threshold is minimum
+            z-score of residual required to be flagged as an outlier.
+        use_existing_fit: bool
+            If True, use the existing fit to check for outliers (if a fit exists for the provided dataset).
+            If False, use a new ridge fit to check for outliers.
+        ridge_kw:
+            Keyword args to pass to ridge_fit if Inverter instance has not yet been fitted.
+            Ignored if Inverter has already been fitted
 
-		Returns:
-		--------
-		outlier_idx: array
-			Indices of likely outliers
-		"""
+        Returns:
+        --------
+        outlier_idx: array
+            Indices of likely outliers
+        """
         # Check if instance has already been fitted to this data
         if check_equality(frequencies, self.f_train) and check_equality(Z, self.Z_train) \
                 and not self._recalc_mat and hasattr(self, 'distribution_fits'):
@@ -3385,9 +3385,9 @@ class Inverter:
                   fit_data=False, frequencies=None, Z=None, Z_weights=None, lambda_x=10):
         """
         Fit Havriliak-Negami (HN) peaks to the recovered distribution.
-		Uses a peak detection algorithm to determine the number of peaks,
-		then optimizes the HN peak parameters to best fit the distribution
-		and/or impedance data.
+        Uses a peak detection algorithm to determine the number of peaks,
+        then optimizes the HN peak parameters to best fit the distribution
+        and/or impedance data.
 
         Parameters
         ----------
@@ -3552,19 +3552,19 @@ class Inverter:
 
     def predict_peak_distribution(self, eval_tau=None, distribution=None, peak_index=None):
         """
-		Predict distribution from peak fit
+        Predict distribution from peak fit
 
-		Parameters:
-		-----------
-		eval_tau: array, optional (default: None)
-			tau values at which to evaluate the distribution.
-			If None, use basis tau
-		distribution: str, optional (default: None)
-			Name of distribution to predict.
-			If None, use first distribution
-		peak_index : int, optional (default: False)
-		    Index of peak to evaluate. If None, sum contributions of all peaks.
-		"""
+        Parameters:
+        -----------
+        eval_tau: array, optional (default: None)
+            tau values at which to evaluate the distribution.
+            If None, use basis tau
+        distribution: str, optional (default: None)
+            Name of distribution to predict.
+            If None, use first distribution
+        peak_index : int, optional (default: False)
+            Index of peak to evaluate. If None, sum contributions of all peaks.
+        """
         # If no distribution specified, use first distribution
         if distribution is None:
             distribution = list(self.distributions.keys())[0]
@@ -3590,16 +3590,16 @@ class Inverter:
 
     def predict_peak_Z(self, frequencies, distribution=None):
         """
-		Predict impedance from HN model fit
+        Predict impedance from HN model fit
 
-		Parameters:
-		-----------
-		frequencies: array
-			Frequencies at which to evaluate impedance
-		distribution: str, optional (default: None)
-			Name of distribution to predict.
-			If None, use first distribution
-		"""
+        Parameters:
+        -----------
+        frequencies: array
+            Frequencies at which to evaluate impedance
+        distribution: str, optional (default: None)
+            Name of distribution to predict.
+            If None, use first distribution
+        """
         # If no distribution specified, use first distribution
         if distribution is None:
             distribution = list(self.distributions.keys())[0]
