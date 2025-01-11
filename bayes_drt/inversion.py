@@ -1150,13 +1150,6 @@ class Inverter:
         SA, SASY: bool
             For testing only
         """
-        # perform scaling and weighting and get A and B matrices
-        frequencies, Z_scaled, WZ_re, WZ_im, W_re, W_im, dist_mat = self._prep_matrices(frequencies, Z, part,
-                                                                                        weights=None, dZ=False,
-                                                                                        scale_Z=scale_Z,
-                                                                                        penalty='discrete',
-                                                                                        fit_type='map')
-
         # get initial fit
         if init_from_ridge:
             if len(self.distributions) > 1:
@@ -1167,6 +1160,13 @@ class Inverter:
                 self._init_params = init()
         else:
             init = 'random'
+            
+        # perform scaling and weighting and get A and B matrices
+        frequencies, Z_scaled, WZ_re, WZ_im, W_re, W_im, dist_mat = self._prep_matrices(frequencies, Z, part,
+                                                                                        weights=None, dZ=False,
+                                                                                        scale_Z=scale_Z,
+                                                                                        penalty='discrete',
+                                                                                        fit_type='map')
 
         # check for outliers. Use more stringent threshold to avoid false positives
         if outliers == 'auto':
